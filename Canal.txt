@@ -1,0 +1,4 @@
+Canal
+Costo SMS	100
+Capacidad Ejecutivo RRAA	80000
+Capacidad Ejecutivo RRMM	125000
