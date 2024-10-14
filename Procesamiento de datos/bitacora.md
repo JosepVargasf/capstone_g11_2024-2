@@ -30,8 +30,7 @@ similar con la probabilidad de pago. Si tienes renta alta y eres buen pagador no
 muy rapido de correr y permite ir actualizando las politicas muchas veces hasta encontrar alguna que sea adecuada. Además podemos definir a priori una cantidad de politicas que permitan que
 el problema sea manejable en terminos del tratamiento que le podemos otorgar. 
 
-Este modelo de clusterizacion debe ser capaz de poder responder dos preguntas. En primer lugar, ¿Vale la pena esforzarse en intentar incentivar al cliente a simular en terminos de las ganancias
-potenciales que este puede proporcionarnos? Y en segundo lugar ¿Es rentable dedicar esfuerzos para incentivar al cliente a realizar simulaciones, considerando hasta qué punto podemos influir en su comportamiento a través de correos electrónicos o la intervención de nuestros ejecutivos?
+Este modelo de clusterizacion debe ser capaz de poder responder dos preguntas. En primer lugar, ¿Vale la pena esforzarse en intentar incentivar al cliente a simular en terminos de las ganancias potenciales que este puede proporcionarnos? Y en segundo lugar ¿Es rentable dedicar esfuerzos para incentivar al cliente a realizar simulaciones, considerando hasta qué punto podemos influir en su comportamiento a través de correos electrónicos o la intervención de nuestros ejecutivos?
 
 Para abordar esta cuestión, necesitamos ser capaces de segmentar a los clientes según características que reflejen tanto su potencial de ganancias como su susceptibilidad a ser incentivados para simular, es decir, su respuesta(en termino de simulaciones) a nuestras estrategias de acercamiento.
 
@@ -39,3 +38,14 @@ Ahora bien, vale la pena preguntarse, ¿que variables nos interesan?. A priori d
 otorgar ese cliente una vez le hemos aceptado un credito son: sobre todo la Renta y la Probabilidad de no pago. Si tomamos solo estas dos variables quedaríamos con (Cantidad de cortes en renta definido por la politica + 1 * Cantidad de cortes en probabilidad no pago definido por la politica + 1) clusters de características.
 
 
+09-10-2024
+
+Con ilan decidimos hacer unas tablas que calculan el reveneau potencial por cada mes, por cada una una de las separaciones de las variables como genero, edad, renta, propension, etc... Esto con la finalidad de poder determinar cuales variables nos permiten responder la primera pregunta: ¿Vale la pena esforzarse en intentar incentivar al cliente a simular en terminos de las ganancias potenciales que este puede proporcionarnos? y ver que variables nos muestran diferencias importantes en las ganancias potenciales. 
+
+Una vez obtenidas estas tablas podemos graficar por mes cuantas ganancias potenciales tiene cada uno de los tipos de tratamiento para cada separacion de las variables.
+
+11-10-2024
+
+# Tabla renta (Tabla que separa a los clientes en renta alta - media - baja)
+
+Podemos ver que en general el monto promedio se agrupa muy bien en los 3 grupos establecidos. En la media y baja al parecer no cam
