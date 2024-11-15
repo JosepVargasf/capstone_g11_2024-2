@@ -5,3 +5,4 @@ Procesamiento de datos/iframe_figures/figure_29.html
 
 BACKUP DATA CLUSTER/*.csv
 cluster_data_20241106_020021/*.csv
+cluster_data_*/*.csv
