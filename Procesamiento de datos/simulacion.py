@@ -3,8 +3,8 @@ import numpy as np
 
 # Cargar datos
 df_clientes = pd.read_csv("Informacion_Clientes.csv")
-df_treatment = pd.read_csv("assigned_treatments_intuitivo_4/assignation_20241116_212213/assigned_treatments_intuitivo4.csv")
-df_cluster = pd.read_csv("assigned_treatments_intuitivo_4/assignation_20241116_212213/cluster_info_intuitivo4.csv")
+df_treatment = pd.read_csv("assigned_treatments/assignation_20241117_140420/assigned_treatments.csv")
+df_cluster = pd.read_csv("cluster_data_20241117_124103/cluster_info.csv")
 
 # Renombrar categoria_clusterizacion_numerica a cluster
 df_cluster = df_cluster.rename(columns={'categoria_clusterizacion_numerica': 'cluster'})
