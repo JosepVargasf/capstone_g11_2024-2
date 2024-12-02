@@ -1,0 +1,8 @@
+Mejor configuración de clustering encontrada:
+Recompensa: 0.42656124031163134
+Revenue: 108373317829.60498
+Clusters: 6
+Variables usadas: Probabilidad_No_Pago, Edad
+Cortes de variables continuas:
+  - Probabilidad_No_Pago: [0.0308280124653679]
+  - Edad: [42.0, 47.0]
