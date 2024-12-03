@@ -1,0 +1,43 @@
+Mejor configuraci�n de clustering encontrada:
+Recompensa: 0.7340881748910355
+Revenue: 140438376614.64838
+Clusters: 12
+Variables usadas: Edad, Elasticidad_Precios, Renta
+Cortes de variables continuas:
+  - Edad: [39.0]
+  - Renta: [1181153.201680521]
+
+
+Mejor configuraci�n de clustering encontrada:
+Recompensa: 0.4233950690566747
+Revenue: 106647531560.3841
+Clusters: 3
+Variables usadas: Probabilidad_No_Pago
+Cortes de variables continuas:
+  - Probabilidad_No_Pago: [0.00324483768749135, 0.0085402934056559]
+
+Mejor configuraci�n de clustering encontrada:
+Recompensa: 0.42739008858919936
+Revenue: 106552058415.97394
+Clusters: 2
+Variables usadas: Probabilidad_No_Pago
+Cortes de variables continuas:
+  - Probabilidad_No_Pago: [0.008540293405655899, 0.0085402934056559]
+
+
+Mejor configuraci�n de clustering encontrada:
+Recompensa: 0.42739008858919936
+Revenue: 106552058415.97394
+Clusters: 2
+Variables usadas: Probabilidad_No_Pago
+Cortes de variables continuas:
+  - Probabilidad_No_Pago: [0.0085402934056559, 0.0085402934056559]
+
+Mejor configuraci�n de clustering encontrada:
+Recompensa: 0.6725162740189976
+Revenue: 145989046031.80478
+Clusters: 36
+Variables usadas: Genero, Elasticidad_Precios, Edad, Renta
+Cortes de variables continuas:
+  - Edad: [31.0]
+  - Renta: [705468.9044051456, 1382978.7928061879]

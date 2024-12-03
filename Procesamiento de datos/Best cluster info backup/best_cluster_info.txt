@@ -1,0 +1,7 @@
+Mejor configuración de clustering encontrada:
+Recompensa: 66148250882.49078
+Revenue: 132348250882.49078
+Clusters: 24
+Variables usadas: Categoria_Digital, Elasticidad_Precios, Edad
+Cortes de variables continuas:
+  - Edad: [35.5, 45.0, 56.5]

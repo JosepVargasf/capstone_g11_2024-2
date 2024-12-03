@@ -1,0 +1,2493 @@
+# 0. Importación de librerias
+
+# Librerías para el análisis de datos
+import numpy as np  # Biblioteca para operaciones numéricas, especialmente útil para trabajar con matrices y arrays
+import pandas as pd  # Biblioteca para manipulación y análisis de datos, especialmente para DataFrames
+import statsmodels.api as sm  # Biblioteca para realizar modelos estadísticos, útil para regresiones y otros análisis estadísticos
+from collections import Counter  # Contador de elementos en colecciones, útil para contar la frecuencia de elementos en una lista o array
+
+# Librería para optimización
+from gurobipy import Model, GRB, quicksum  # Gurobi es una biblioteca de optimización matemática. 
+# Model permite definir el modelo de optimización,
+# GRB contiene constantes (como tipos de variables y sentido de optimización),
+# quicksum permite realizar sumas de forma rápida y eficiente en Gurobi.
+
+# Librerías operacionales
+import os  # Biblioteca para interactuar con el sistema operativo (ej. manejo de archivos y rutas)
+from datetime import datetime  # Módulo para trabajar con fechas y tiempos, útil para capturar fechas actuales o manipular datos de tiempo
+import matplotlib.pyplot as plt
+
+# rl
+# # Importar las librerías necesarias
+import gymnasium as gym
+from gymnasium import spaces
+from stable_baselines3 import DQN
+from stable_baselines3.common.env_checker import check_env
+from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback, BaseCallback
+from stable_baselines3.common.monitor import Monitor
+import gc
+import logging  
+from sklearn.preprocessing import normalize
+from joblib import Parallel, delayed 
+import warnings
+
+
+
+
+
+# <h2>1. Carga de datos desde excel a dataframes de pandas</h2>
+
+
+En primer lugar se cargan los datos iniciales desde los csv que nos proveen. (Esto puede tardar un ratito)
+
+url_tratamiento = 'https://drive.usercontent.google.com/download?id=1KTRwYGaWoQQnZwbk8VpdxKULMaOReoF5&authuser=0&confirm=t&uuid=4e4d7983-c5a5-412d-9f5b-b9bda1068b73&at=AENtkXZSxkDr84kWrDlz6ANq4ov2%3A1730951312566'
+
+df_tratamiento = pd.read_csv("Tratamiento.csv")
+
+file_id = '173bRZQG7NWfdpHJ-o4-NA3ieH1-Fhyok'
+url_informacion_de_clientes = f'https://drive.google.com/uc?id={file_id}'
+
+df_informacion_de_clientes = pd.read_csv("Informacion_Clientes.csv")
+
+url_simulaciones_clientes = 'https://drive.usercontent.google.com/download?id=1IXyKwtKFLCUsAV1MtNqktiwKaHzV2D5A&authuser=0&confirm=t&uuid=edd22376-238f-4c1f-b603-728b07bafd7f&at=AENtkXaEURpV52p_BdWxyisvjhSQ%3A1730951026384'
+
+df_simulaciones_clientes = pd.read_csv("Simulaciones_clientes.csv")
+
+file_id = '1Z4jMzZeD2q-4-ioSgyimppAdLZzqDkt3'
+url_ventas = f'https://drive.google.com/uc?id={file_id}'
+
+df_ventas = pd.read_csv("Ventas.csv")
+
+## <h3>1.1 Carga de 'Informacion_Clientes.csv'</h3>
+
+En primer lugar se cargará la información de los clientes. Esto incluye las siguientes características de los clientes:
+
+* **unnamed**: algo como uid
+* **Rut**: identificador de Chile (supongo que por privacidad va desde 0 a max de observaciones)
+* **Género**: Masculino o femenino
+* **Categoría_Digital**: Si el cliente es digital o no
+* **Elasticidad_Precios**: Baja, media o alta
+* **Nacionalidad**: Chileno o extranjero
+* **Propensión**: Número entre 0 y 1 que idica que tan propenso a cursar un credito es el cliente
+* **Probabilidad_No_Pago**: Número entre 0 y 1 que indica la probabilidad de que el cliente no pague la deuda
+* **Edad**: Numero entero de edad en años
+* **Renta**: Renta promedio de los últimos 12 meses
+* **Oferta_Consumo**: Monto máximo que puede cursar un cliente dado sus antecedentes crediticios y situación socioeconómica. 
+* **Deuda_CMF**: Deuda que tiene el cliente en otros bancos. Efectivamente es deuda pendiente, pero de créditos otorgados por la competencia.
+* **Tiempo_como_cliente**: Número de tiempo(no sé en que medida está) que el cliente lleva en el banco
+
+
+Se elimina el tiempo como cliente ya que no aporta información
+
+df_informacion_de_clientes.drop(columns=['Tiempo_como_cliente'], inplace=True)
+
+## <h3>1.2 Carga de 'Simulaciones_Clientes.csv'</h3>
+
+
+
+En segundo lugar se cargaran las simulaciones hechas por los clientes en la página del banco. Esto incluye las siguientes características de las simulaciones:
+* **unnamed**: Supongo que es el número de simulacion registrada, un tipo de identificador de la simulación
+* **fecha**: yyyy-mm-dd fecha de la simulación
+* **rut**: identificador de Chile del cliente que hizo la simulacion
+* **monto_simulado**: monto prestado al cliente
+* **plazo_simulado**: plazo en **meses** del crédito
+* **tasa_simulado**: costo para el cliente del credito
+
+df_simulaciones_clientes = df_simulaciones_clientes[df_simulaciones_clientes['Monto_Simulado'] > 0]
+
+## <h3>1.3 Carga de 'Tratamiento.csv'</h3>
+
+En tercer lugar se cargara el tratamiento que ha tenido el banco con el cliente, es decir, cómo se han contactado con él. Esto incluye las siguientes características:
+
+* **unnamed**: Número de tratamiento registrado
+* **fecha**: yyyy-mm-dd
+* **rut**: Identificador de Chile del cliente con el que se tiene el tipo de trato
+* **n_correos**: Cantidad de correos que se enviaron en el mes que sale la fecha. Es decir, si sele fecha '2024-03-01', correspondería a los correos enviados en marzo de 2024.
+* **asg_ejec**: Si el cliente tiene un ejecutivo asignado
+
+## <h3>1.4 Carga de 'Ventas.csv'</h3>
+
+Por último se cargaran las ventas que ha tenido el banco con el cliente. Esto incluye las siguientes características:
+
+* **unnamed**: Índice sin significado
+* **fecha**: yyyy-mm-dd -> fecha en la que se concretó la venta
+* **rut**: identificador de Chile del cliente al que se le concretó la venta
+
+# <h2>2. Joints de datos<h2>
+
+# Unir los DataFrames 'df_informacion_de_clientes' y 'df_simulaciones_clientes' en base a la columna 'rut'
+# El método 'how="left"' asegura que todos los registros de 'df_informacion_de_clientes' se conserven,
+# incluso si no tienen coincidencia en 'df_simulaciones_clientes'.
+df_simulaciones_e_informacion_de_clientes = pd.merge(
+    df_informacion_de_clientes, 
+    df_simulaciones_clientes, 
+    on='rut', 
+    how='left'
+)
+
+# Crear una nueva columna 'simulo' que indica si el cliente tiene un 'Monto_Simulado' o no
+# El método 'notna()' devuelve True para valores no nulos y False para nulos.
+# Luego, 'astype(int)' convierte estos valores booleanos en enteros (1 para True, 0 para False).
+df_simulaciones_e_informacion_de_clientes['simulo'] = df_simulaciones_e_informacion_de_clientes['Monto_Simulado'].notna().astype(int)
+
+# Eliminar columnas innecesarias 'Unnamed: 0_x' y 'Unnamed: 0_y' que podrían haber surgido durante la carga o manipulación de datos
+df_simulaciones_e_informacion_de_clientes.drop(columns=['Unnamed: 0_x', 'Unnamed: 0_y'], inplace=True)
+
+
+df_simulaciones_e_informacion_de_clientes
+
+# Unir los DataFrames 'df_simulaciones_e_informacion_de_clientes' y 'df_ventas' en base a las columnas 'rut' y 'fecha'
+# El método 'how="left"' asegura que todos los registros de 'df_simulaciones_e_informacion_de_clientes' se conserven,
+# incluso si no tienen coincidencia en 'df_ventas'.
+df_simulaciones_e_informacion_de_clientes_ventas = pd.merge( 
+    df_simulaciones_e_informacion_de_clientes, 
+    df_ventas, 
+    on=['rut', 'fecha'], 
+    how='left'
+)
+
+# Crear una nueva columna 'venta' que indica si existe una venta asociada al cliente y la fecha específica
+# El método 'notna()' verifica si hay un valor no nulo en la columna 'Unnamed: 0' (que indica presencia de una venta)
+# Luego, 'astype(int)' convierte estos valores booleanos en enteros (1 para True, 0 para False).
+df_simulaciones_e_informacion_de_clientes_ventas['venta'] = df_simulaciones_e_informacion_de_clientes_ventas['Unnamed: 0'].notna().astype(int)
+
+
+# Unir los DataFrames 'df_simulaciones_e_informacion_de_clientes_ventas' y 'df_tratamiento' en base a las columnas 'rut' y 'fecha'
+# La unión se realiza con 'how="left"' para conservar todos los registros de 'df_simulaciones_e_informacion_de_clientes_ventas'
+# incluso si no tienen coincidencia en 'df_tratamiento'.
+df_simulaciones_e_informacion_de_clientes_ventas_tratamiento = pd.merge( 
+    df_simulaciones_e_informacion_de_clientes_ventas, 
+    df_tratamiento, 
+    on=['rut', 'fecha'], 
+    how='left'
+)
+
+# Crear una nueva columna 'mes' que extrae el mes y año de la columna 'fecha'
+# Primero se convierte 'fecha' al formato datetime, luego 'dt.to_period('M')' obtiene el periodo del mes/año.
+df_simulaciones_e_informacion_de_clientes_ventas_tratamiento['mes'] = pd.to_datetime(df_simulaciones_e_informacion_de_clientes_ventas_tratamiento['fecha']).dt.to_period('M')
+
+# Eliminar las columnas 'Unnamed: 0_x' y 'Unnamed: 0_y' ya que no aportan información relevante
+df_simulaciones_e_informacion_de_clientes_ventas_tratamiento.drop(columns=['Unnamed: 0_x', 'Unnamed: 0_y'], inplace=True)
+
+# 3. CLUSTERING POR POLITICAS
+
+### Seteo de cluster. Aquí se definen las variables y sus cortes. La idea es que el algoritmo de RL haga sus acciones en esta sección
+
+Aquí se definen que variables se utilizarán para crear el cluster
+
+df_informacion_de_clientes_procesados_cluster_definitivo = df_informacion_de_clientes[['rut', 'Elasticidad_Precios', 'Edad', 'Genero', 'Renta', 'Probabilidad_No_Pago']].copy()
+
+
+Aqui se definen en que partes y en cuantas partes se particionarán las variables escogidas anteriormente
+
+# Crear una copia del DataFrame 'df_informacion_de_clientes_procesados_cluster_definitivo' para trabajar sin modificar el original
+df = df_informacion_de_clientes_procesados_cluster_definitivo.copy()
+
+# Clasificar la columna 'Probabilidad_No_Pago' en cinco categorías, asignando etiquetas según los valores de probabilidad
+# Cada categoría representa el nivel de confiabilidad en el pago: desde 'Muy buen pagador' hasta 'Muy mal pagador'.
+df['Categoria_Probabilidad_No_Pago'] = pd.cut(df['Probabilidad_No_Pago'], 
+                                              bins=[-float('inf'), 0.0085402934056559, float('inf')],
+                                              labels=['Buen pagador', 'Mal pagador'])
+
+# Clasificar la columna 'Edad' en tres categorías: 'Joven', 'Adulto' y 'Adulto Mayor'
+# Cada categoría se define en función de rangos de edad especificados en 'bins'.
+df['Categoria_Edad'] = pd.cut(df['Edad'], 
+                              bins=[-float('inf'), 31, float('inf')],
+                              labels=['Joven', 'Adulto'])
+
+# Crear un DataFrame único de 'rut' y 'Renta' eliminando duplicados, para calcular percentiles de renta
+df_unicos_renta = df[['rut', 'Renta']].drop_duplicates()
+
+# Clasificar la columna 'Percentil_Renta' en tres categorías: 'Renta Baja', 'Renta Media' y 'Renta Alta'
+# Los rangos de percentil especificados en 'bins' definen estas categorías.
+df_unicos_renta['Categoria_Renta'] = pd.cut(df_unicos_renta['Renta'], 
+                                            bins=[-float('inf'), 705468.9044051456, 1382978.7928061879, float('inf')],
+                                            labels=['Renta Baja', 'Renta Media', 'Renta Alta'])
+
+# Incorporar la categoría de renta al DataFrame principal 'df' realizando una unión ('merge') en base a la columna 'rut'
+df = df.merge(df_unicos_renta[['rut', 'Categoria_Renta']], on='rut', how='left')
+
+# Mostrar el DataFrame resultante con las nuevas columnas creadas
+df
+
+
+# Concatenar las variables especificadas en una nueva columna 'categoria_clusterizacion'
+# La columna resultante combinará varias categorías en una descripción detallada del perfil del cliente.
+# Convertimos cada columna a tipo string para asegurarnos de que los datos sean compatibles para la concatenación.
+
+df['categoria_clusterizacion'] = (
+    df['Elasticidad_Precios'].astype(str) + ' ' +              # Categoría de digitalización del cliente
+    df['Categoria_Edad'].astype(str) + ' de genero ' +       # Categoría de edad, seguida de la palabra "de genero"
+    df['Genero'].astype(str) + ' con una ' +                     # Género del cliente
+    df['Categoria_Renta'].astype(str) + 'que es un ' +                      # Categoría de renta
+    df['Categoria_Probabilidad_No_Pago'].astype(str)  # Categoría de probabilidad de no pago
+)
+
+
+# Asignar un número único a cada entrada distinta en la columna 'categoria_clusterizacion'
+# Se convierte la columna a tipo 'category', lo cual facilita la asignación de códigos numéricos únicos.
+# 'cat.codes' asigna un código numérico único para cada valor único de 'categoria_clusterizacion'.
+df['categoria_clusterizacion_numerica'] = df['categoria_clusterizacion'].astype('category').cat.codes
+
+
+# Crear una copia del DataFrame con solo las columnas 'rut', 'categoria_clusterizacion' y 'categoria_clusterizacion_numerica'
+# Esta copia se almacena en el nuevo DataFrame 'asignacion_clusters', el cual contendrá únicamente la identificación del cliente (rut),
+# la descripción del perfil ('categoria_clusterizacion') y el código numérico asignado a cada perfil ('categoria_clusterizacion_numerica').
+asignacion_clusters = df[['rut', 'categoria_clusterizacion', 'categoria_clusterizacion_numerica']].copy()
+
+
+# 4. Estimacion de curvas de elasticidad por cluster
+
+# Realizar una unión entre 'df_simulaciones_e_informacion_de_clientes_ventas' y 'asignacion_clusters' usando la columna 'rut' como clave
+# Esta unión ('merge') se realiza con 'how="left"', lo que asegura que todos los registros de 'df_simulaciones_e_informacion_de_clientes_ventas' 
+# se conserven, incluyendo aquellos sin coincidencia en 'asignacion_clusters'.
+# La finalidad es agregar la información de clusterización (categoría y código numérico) al DataFrame de simulaciones y ventas.
+df_estimar_elasticidad = pd.merge(df_simulaciones_e_informacion_de_clientes_ventas, asignacion_clusters, on='rut', how='left')
+
+
+def plot_elasticity_curve_with_histogram(tasas_grid, acceptance_probability, tasa_optima, df_cluster, cluster_num, output_folder):
+    """
+    Grafica la curva de elasticidad con la tasa óptima marcada y un histograma
+    que muestra ventas y no ventas para cada precio, con mejoras en la visualización.
+    
+    Args:
+    - tasas_grid (numpy array): Valores de la tasa simulada (eje X).
+    - acceptance_probability (numpy array): Probabilidades de aceptación (eje Y).
+    - tasa_optima (float): Tasa óptima encontrada.
+    - df_cluster (DataFrame): Datos del cluster actual, incluyendo 'Tasa_Simulado' y 'venta'.
+    - cluster_num (int): Número del cluster para el título.
+    - output_folder (str): Ruta de la carpeta donde se guardará el gráfico.
+    """
+    # Preparar datos para el histograma
+    ventas = df_cluster[df_cluster['venta'] == 1]['Tasa_Simulado']
+    no_ventas = df_cluster[df_cluster['venta'] == 0]['Tasa_Simulado']
+    
+    # Crear la figura
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    
+    # Curva de elasticidad
+    ax1.plot(tasas_grid, acceptance_probability, label="Curva de Elasticidad", color='blue', linewidth=2)
+    ax1.axvline(x=tasa_optima, color='green', linestyle='--', label=f"Tasa Óptima: {tasa_optima:.2f}%", zorder=10)
+    ax1.set_xlabel("Tasa Simulada (%)", fontsize=12)
+    ax1.set_ylabel("Probabilidad de Aceptación", fontsize=12, color='black')
+    ax1.tick_params(axis='y', labelcolor='black')
+    ax1.set_ylim(0, 1)
+    ax1.grid(True, linestyle='--', alpha=0.7)
+    ax1.legend(loc='upper left', bbox_to_anchor=(1.2, 1))  # Leyenda fuera de la gráfica
+    
+    # Histograma de ventas y no ventas (usar el segundo eje Y)
+    ax2 = ax1.twinx()
+    ax2.hist([ventas, no_ventas], bins=20, color=['blue', 'red'], alpha=0.3, label=["Ventas", "No Ventas"], stacked=True)
+    ax2.set_ylabel("Frecuencia de Ventas", fontsize=12, color='black')
+    ax2.tick_params(axis='y', labelcolor='black')
+    ax2.legend(loc='upper left', bbox_to_anchor=(1.2, 0.85))  # Leyenda fuera de la gráfica
+
+    # Título
+    plt.title(f"Curva de Elasticidad y Ventas por Tasa - Cluster {cluster_num}", fontsize=14)
+    
+    # Ajustar diseño para evitar superposiciones
+    plt.tight_layout()
+    
+    # Guardar el gráfico
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    
+    output_path = os.path.join(output_folder, f"curva_elasticidad_cluster_{cluster_num}.png")
+    plt.savefig(output_path)
+    print(f"Gráfico guardado en: {output_path}")
+    plt.close()
+
+
+### Este código realiza un análisis de elasticidad de ingresos en función de clusters de clientes. Primero, agrupa los datos por clusters definidos a través de variables de segmentación y filtra solo los datos relevantes para cada cluster. Luego, para cada cluster, se ajusta un modelo de regresión logística para predecir la probabilidad de aceptación de una simulación de crédito en función de la tasa de interés. A partir de este modelo, se crea una cuadrícula de tasas para estimar la probabilidad de aceptación y calcular el revenue potencial de cada simulación, teniendo en cuenta el monto medio simulado, el plazo medio simulado y la probabilidad media de no pago del cluster. Posteriormente, se determina la tasa que maximiza el revenue esperado y se calcula el número esperado de créditos aceptados, junto con el número de clientes únicos en cada cluster. Finalmente, los resultados se agregan tanto en listas globales como en un nuevo DataFrame, y luego se integran en el DataFrame original df_estimar_elasticidad, lo que permite analizar el revenue esperado total y otros indicadores clave en cada cluster.
+
+def function_estimar_elasticidad(df_estimar_elasticidad):
+    # Inicializar listas para almacenar resultados globales de revenue, clientes, créditos y simulaciones
+    lista_revenue = []
+    lista_clientes = []
+    lista_creditos = []
+    lista_simulaciones = []
+
+    cluster_results = []  # Lista para almacenar resultados específicos de cada cluster
+
+    # Obtener los números únicos de cada cluster
+    cluster_numbers = df_estimar_elasticidad['categoria_clusterizacion_numerica'].unique()
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_folder = f"hg_reglog_{timestamp}"
+    os.makedirs(output_folder, exist_ok=True)
+
+    # Iterar sobre cada cluster identificado por 'categoria_clusterizacion_numerica'
+    for cluster_num in cluster_numbers:
+        # Filtrar los datos correspondientes al cluster actual
+        df_cluster = df_estimar_elasticidad[df_estimar_elasticidad['categoria_clusterizacion_numerica'] == cluster_num]
+        
+        # Asegurarse de que existen datos para ambos casos: venta == 1 y venta == 0
+        if df_cluster.empty or df_cluster['venta'].isnull().all():
+            continue  # Saltar este cluster si no cumple con la condición
+        
+        # Remover filas donde 'venta' o 'Tasa_Simulado' son nulos o infinitos
+        df_cluster = df_cluster.replace([np.inf, -np.inf], np.nan)
+        df_cluster = df_cluster.dropna(subset=['venta', 'Tasa_Simulado', 'Plazo_Simulado', 'Monto_Simulado', 'Probabilidad_No_Pago'])
+        
+        # Saltar el cluster si no hay suficientes puntos de datos
+        if df_cluster.shape[0] < 10:
+            continue
+        
+        # Extraer las variables 'venta' (como variable dependiente) y 'Tasa_Simulado' (como predictor)
+        y = df_cluster['venta']
+        X = df_cluster[['Tasa_Simulado']]
+        
+        # Añadir un término constante para el intercepto
+        X = sm.add_constant(X)
+        
+        # Remover filas con valores NaN o Inf en X o y
+        is_finite = np.isfinite(X).all(1) & np.isfinite(y)
+        X = X[is_finite]
+        y = y[is_finite]
+        
+        # Asegurarse de que después de remover NaN/Inf, todavía hay suficientes datos
+        if len(y) < 10:
+            continue
+        
+        # Ajustar el modelo de regresión logística
+        logit_model = sm.Logit(y, X)
+        try:
+            result = logit_model.fit(disp=0)
+        except:
+            continue  # Saltar el cluster si el modelo no converge
+        
+        # Crear una cuadrícula de valores de 'Tasa_Simulado' para predicciones
+        tasa_min = df_cluster['Tasa_Simulado'].min()
+        tasa_max = df_cluster['Tasa_Simulado'].max()
+        tasas_grid = np.linspace(tasa_min, tasa_max, 1000)
+        
+        # Predecir la probabilidad de aceptación usando el modelo ajustado
+        X_grid = sm.add_constant(tasas_grid)
+        acceptance_probability = result.predict(X_grid)
+        
+        # Asegurar que las probabilidades están en el rango [0, 1]
+        acceptance_probability = np.clip(acceptance_probability, 0, 1)
+
+        # Calcular valores medios necesarios para el cálculo de revenue
+        n = df_cluster['Plazo_Simulado'].mean()
+        vp = df_cluster['Monto_Simulado'].mean()
+        pnp = df_cluster['Probabilidad_No_Pago'].mean()
+        data = {
+            'Plazo_Simulado_medio': n, 
+            'Monto_Simulado_medio': vp, 
+            'Probabilidad_No_Pago_media': pnp
+        }
+        
+        # Calcular el revenue potencial
+        i = tasas_grid / 100  # Convertir a decimal
+        one_plus_i_pow_n = np.power(1 + i, n)
+        annuity_factor = (i * one_plus_i_pow_n) / (one_plus_i_pow_n - 1)
+        revenue = (n * vp * annuity_factor) - vp
+        potential_revenue = revenue * (1 - pnp)
+        
+        # Calcular el promedio de simulaciones por fecha
+        df_cluster_simulaciones_1 = df_cluster[df_cluster['simulo'] == 1]
+        num_dates = df_cluster_simulaciones_1['fecha'].nunique()
+        total_simulaciones = df_cluster_simulaciones_1['simulo'].sum()
+        simulaciones_medias = total_simulaciones / num_dates if num_dates else 0
+        
+        # Saltar el cluster si no hay simulaciones
+        if simulaciones_medias == 0:
+            continue
+        
+        # Calcular el revenue esperado
+        expected_revenue = acceptance_probability * potential_revenue * simulaciones_medias
+        
+        # Encontrar la tasa que maximiza el revenue esperado
+        idx_max = np.argmax(expected_revenue)
+        max_price = tasas_grid[idx_max]
+        max_expected_revenue = expected_revenue[idx_max]
+        
+        # Probabilidad de aceptación en la tasa óptima
+        prob_aceptacion_optima = acceptance_probability[idx_max]
+        
+        # Llamar a la función para graficar la curva y el histograma
+        # plot_elasticity_curve_with_histogram(
+        #     tasas_grid, 
+        #     acceptance_probability, 
+        #     max_price, 
+        #     df_cluster,  # Pasamos todo el DataFrame del cluster actual
+        #     cluster_num, 
+        #     output_folder
+        # )
+
+        # Número esperado de créditos aceptados
+        num_creditos_aceptados = round(prob_aceptacion_optima * simulaciones_medias)
+        
+        # Número de clientes únicos en el cluster
+        num_clients = df_cluster['rut'].nunique()
+        
+        # Imprimir resultados para cada cluster
+        print(f'Cluster {cluster_num}:')
+        print(f'- Precio Máx. Revenue Esperado = {max_price:.2f}%')
+        print(f'- Revenue Esperado Máximo = {max_expected_revenue:,.2f}')
+        print(f'- Número de clientes en el cluster = {num_clients}')
+        print(f'- Número de simulaciones en el cluster = {simulaciones_medias:.2f}')
+        print(f'- Probabilidad de aceptación en el precio óptimo = {prob_aceptacion_optima:.4f}')
+        print(f'- Número esperado de créditos aceptados = {num_creditos_aceptados}')
+        print(f'- Monto medio simulado = {data["Monto_Simulado_medio"]:,.2f}')
+        print(f'- Plazo medio simulado = {data["Plazo_Simulado_medio"]:,.2f}')
+        print(f'- Probabilidad de no pago media = {data["Probabilidad_No_Pago_media"]:.4f}\n')
+
+        # Agregar resultados a las listas globales
+        lista_clientes.append(num_clients)
+        lista_revenue.append(max_expected_revenue)
+        lista_creditos.append(num_creditos_aceptados)
+        lista_simulaciones.append(simulaciones_medias)
+        
+        # Almacenar resultados por cluster en cluster_results
+        cluster_results.append({
+            'categoria_clusterizacion_numerica': cluster_num,
+            'tasa_optima': max_price,
+            'probabilidad_aceptacion_optima': prob_aceptacion_optima,
+            'revenue_esperado_maximo': max_expected_revenue,
+            'numero_clientes': num_clients,
+            'numero_simulaciones_medias': simulaciones_medias,
+            'numero_creditos_esperados': num_creditos_aceptados,
+            'monto_medio_simulado': data["Monto_Simulado_medio"],
+            'plazo_medio_simulado': data["Plazo_Simulado_medio"],
+            'probabilidad_no_pago_media': data["Probabilidad_No_Pago_media"]
+        })
+
+    # Imprimir resultados globales
+    total_revenue = sum(lista_revenue)
+    total_clientes = sum(lista_clientes)
+    total_simulaciones = sum(lista_simulaciones)
+    total_creditos = sum(lista_creditos)
+
+    print(f"El revenue total esperado es: {total_revenue:,.2f} con un total de {total_clientes} clientes, "
+        f"{total_simulaciones:,.2f} simulaciones, y {total_creditos} créditos.")
+
+    # Crear un DataFrame a partir de cluster_results
+    df_cluster_results = pd.DataFrame(cluster_results)
+
+    # Incorporar los resultados por cluster de 'df_cluster_results' a 'df_estimar_elasticidad'
+    df_estimar_elasticidad = df_estimar_elasticidad.merge(
+        df_cluster_results[['categoria_clusterizacion_numerica', 'tasa_optima', 'probabilidad_aceptacion_optima']],
+        on='categoria_clusterizacion_numerica', 
+        how='left'
+    )
+    return {'df_estimar_elasticidad': df_estimar_elasticidad, 'total_revenue': total_revenue, 'total_clientes': total_clientes, 'total_simulaciones': total_simulaciones, 'total_creditos': total_creditos}
+
+
+df_estimar_elasticidad = function_estimar_elasticidad(df_estimar_elasticidad)['df_estimar_elasticidad']
+
+# 5. Estimacion de respuesta a tratamiento por cluster
+
+# Unir los DataFrames 'df_tratamiento' y 'df_simulaciones_clientes' usando las columnas 'rut' y 'fecha' como claves
+# La unión se realiza con 'how="left"', lo cual asegura que todos los registros de 'df_tratamiento' se conserven,
+# incluyendo aquellos sin coincidencia en 'df_simulaciones_clientes'.
+# Esta operación permite combinar la información de tratamiento con los datos de simulaciones de clientes.
+df_simulaciones_info = pd.merge(df_tratamiento, df_simulaciones_clientes, on=['rut', 'fecha'], how='left')
+
+
+# Usar operaciones de cadenas vectorizadas para crear la columna 'Tratamiento'
+# Esta columna concatenará información sobre el ejecutivo asignado y el número de correos enviados.
+# Se convierte 'asg_ejec' a string para poder concatenar, y 'n_correos' se convierte primero a entero y luego a string.
+# El formato final es: "Ejecutivo=<valor_asg_ejec>, Correos=<valor_n_correos>"
+df_simulaciones_info['Tratamiento'] = (
+    'Ejecutivo=' + df_simulaciones_info['asg_ejec'].astype(str) +
+    ', Correos=' + df_simulaciones_info['n_correos'].astype(int).astype(str)
+)
+
+
+# Extraer el mes y año de la columna 'fecha' y crear una nueva columna 'mes' en formato de periodo mensual
+# Se convierte 'fecha' al formato datetime y luego se usa 'dt.to_period('M')' para obtener el mes/año.
+df_simulaciones_info['mes'] = pd.to_datetime(df_simulaciones_info['fecha']).dt.to_period('M')
+
+# Filtrar y mostrar las filas donde 'rut' es igual a 1
+# Este filtro permite observar los registros específicos del cliente con 'rut' igual a 1, 
+# lo cual es útil para verificar datos o analizar un cliente en particular.
+df_simulaciones_info[df_simulaciones_info['rut'] == 1]
+
+
+# Crear una nueva columna 'simulo' para indicar si el cliente tiene un registro de simulación
+# La columna 'Unnamed: 0_y' se utiliza para verificar si hay un valor no nulo, lo que implica que hay una simulación.
+# 'notna()' devuelve True para valores no nulos y False para valores nulos; luego, 'astype(int)' convierte estos valores a 1 (True) o 0 (False).
+df_simulaciones_info['simulo'] = df_simulaciones_info['Unnamed: 0_y'].notna().astype(int)
+
+# Filtrar y mostrar las filas donde 'rut' es igual a 1
+# Este filtro permite observar los registros específicos del cliente con 'rut' igual a 1, 
+# útil para verificar si la columna 'simulo' refleja correctamente la presencia de simulaciones para este cliente.
+df_simulaciones_info[df_simulaciones_info['rut'] == 1]
+
+
+# Crear una copia del DataFrame 'df_estimar_elasticidad' con solo las columnas especificadas
+# 'df1' contiene las columnas 'rut', 'categoria_clusterizacion_numerica', 'tasa_optima' y 'probabilidad_aceptacion_optima'.
+# Esta copia es útil para trabajar con los datos de elasticidad y clusterización sin modificar el DataFrame original.
+df1 = df_estimar_elasticidad[['rut', 'categoria_clusterizacion_numerica', 'tasa_optima', 'probabilidad_aceptacion_optima']].copy()
+
+# Crear una copia del DataFrame 'df_simulaciones_info' con solo las columnas especificadas
+# 'df2' contiene las columnas 'rut', 'mes', 'Tratamiento' y 'simulo'.
+# Esta copia es útil para trabajar con los datos de tratamiento y simulación en un conjunto de datos reducido.
+df2 = df_simulaciones_info[['rut', 'mes', 'Tratamiento', 'simulo']].copy()
+
+
+def function_estimar_respuesta_a_tratamiento(df_estimar_elasticidad, df_simulaciones_info): #df1 es df_estimar_elasticidad y df2 es df_simulaciones_info
+    # Paso 1: Preparación de datos y mapeo de clusters
+    # Eliminar duplicados en 'df1' para tener un valor único de 'categoria_clusterizacion_numerica' por cada 'rut'.
+    df_estimar_elasticidad_unique = df_estimar_elasticidad.drop_duplicates(subset='rut')
+
+    # Crear un mapeo de 'rut' a 'categoria_clusterizacion_numerica' para asociar cada cliente a su cluster numérico.
+    rut_cluster_map = df_estimar_elasticidad_unique.set_index('rut')['categoria_clusterizacion_numerica']
+
+    # Mapear la categoría de cluster a cada 'rut' en 'df2' usando el mapeo creado
+    df_simulaciones_info['categoria_clusterizacion_numerica'] = df_simulaciones_info['rut'].map(rut_cluster_map)
+
+    # Eliminar filas donde 'categoria_clusterizacion_numerica' es nulo, es decir, aquellos 'rut' sin mapeo de cluster.
+    df_simulaciones_info = df_simulaciones_info.dropna(subset=['categoria_clusterizacion_numerica'])
+
+    # Conversión de tipos de datos
+    # Convertir 'categoria_clusterizacion_numerica' a entero para garantizar un tipo de dato consistente.
+    df_simulaciones_info['categoria_clusterizacion_numerica'] = df_simulaciones_info['categoria_clusterizacion_numerica'].astype(int)
+
+    # Convertir 'simulo' a numérico, reemplazando valores nulos por 0 y asegurando que sea un tipo de dato entero.
+    df_simulaciones_info['simulo'] = pd.to_numeric(df_simulaciones_info['simulo'], errors='coerce').fillna(0).astype(int)
+
+    # Convertir 'Tratamiento' a tipo de categoría para optimizar espacio y realizar operaciones categóricas.
+    df_simulaciones_info['Tratamiento'] = df_simulaciones_info['Tratamiento'].astype('category')
+
+    # Paso 2: Calcular el caso total (entradas por tratamiento sin importar el valor de 'simulo')
+    # Agrupar por 'categoria_clusterizacion_numerica' y 'Tratamiento' para contar el número total de registros en cada combinación.
+    total_entries_per_cluster_treatment = df_simulaciones_info.groupby(['categoria_clusterizacion_numerica', 'Tratamiento']).size().reset_index(name='caso_total')
+
+    # Paso 3: Calcular el caso favorable (entradas por tratamiento cuando 'simulo' == 1)
+    # Filtrar filas donde 'simulo' es 1 (clientes que realizaron una simulación)
+    df_simulations = df_simulaciones_info[df_simulaciones_info['simulo'] == 1]
+
+    # Agrupar por 'categoria_clusterizacion_numerica' y 'Tratamiento' para contar el número de registros favorables (simulaciones).
+    favorable_entries_per_cluster_treatment = df_simulations.groupby(['categoria_clusterizacion_numerica', 'Tratamiento']).size().reset_index(name='caso_favorable')
+
+    # Paso 4: Calcular la probabilidad de simulación como caso favorable / caso total
+    # Realizar un merge entre 'total_entries_per_cluster_treatment' y 'favorable_entries_per_cluster_treatment' en las columnas de cluster y tratamiento.
+    df_probabilities = total_entries_per_cluster_treatment.merge(
+        favorable_entries_per_cluster_treatment,
+        on=['categoria_clusterizacion_numerica', 'Tratamiento'],
+        how='left'
+    )
+
+    # Llenar valores nulos en 'caso_favorable' con 0, asegurando que solo las columnas numéricas estén afectadas.
+    df_probabilities['caso_favorable'] = df_probabilities['caso_favorable'].fillna(0).astype(int)
+
+    # Asegurar que 'caso_total' sea de tipo entero para evitar inconsistencias en los conteos.
+    df_probabilities['caso_total'] = df_probabilities['caso_total'].astype(int)
+
+    # Calcular la probabilidad de simulación como el cociente entre 'caso_favorable' y 'caso_total'.
+    df_probabilities['probabilidad_simular'] = df_probabilities['caso_favorable'] / df_probabilities['caso_total']
+
+    # Organizar las columnas del DataFrame resultante para facilitar su análisis.
+    df_probabilities = df_probabilities[[
+        'categoria_clusterizacion_numerica',
+        'Tratamiento',
+        'probabilidad_simular',
+        'caso_favorable',
+        'caso_total'
+    ]]
+
+    # Mostrar el DataFrame resultante con la probabilidad de simulación calculada para cada combinación de cluster y tratamiento.
+    return df_probabilities
+
+
+df_probabilities = function_estimar_respuesta_a_tratamiento(df1, df2)
+df_probabilities
+
+# Visualizar el DataFrame 'df_estimar_elasticidad' para revisar su contenido antes de realizar cálculos adicionales
+df_estimar_elasticidad
+
+# Calcular el valor promedio de 'Monto_Simulado' para cada 'categoria_clusterizacion_numerica'
+# Usamos 'groupby' para agrupar por 'categoria_clusterizacion_numerica' y 'transform("mean")' para calcular el promedio.
+# Luego, 'transform' asigna este valor promedio a cada fila dentro de su grupo, creando una columna 'Monto_Simulado_mean' con estos promedios.
+df_estimar_elasticidad['Monto_Simulado_mean'] = df_estimar_elasticidad.groupby('categoria_clusterizacion_numerica')['Monto_Simulado'].transform('mean')
+
+# Calcular el valor promedio de 'Plazo_Simulado' para cada 'categoria_clusterizacion_numerica'
+# Similar al cálculo anterior, 'groupby' agrupa los datos por 'categoria_clusterizacion_numerica', y 'transform("mean")' calcula el promedio.
+# Se asigna el promedio resultante a cada fila dentro del grupo en la nueva columna 'Plazo_Simulado_mean'.
+df_estimar_elasticidad['Plazo_Simulado_mean'] = df_estimar_elasticidad.groupby('categoria_clusterizacion_numerica')['Plazo_Simulado'].transform('mean')
+df_estimar_elasticidad['Plazo_Simulado_min'] = df_estimar_elasticidad.groupby('categoria_clusterizacion_numerica')['Plazo_Simulado'].transform('min')
+df_estimar_elasticidad['Plazo_Simulado_max'] = df_estimar_elasticidad.groupby('categoria_clusterizacion_numerica')['Plazo_Simulado'].transform('max')
+df_estimar_elasticidad['Plazo_Simulado_mode'] = df_estimar_elasticidad.groupby('categoria_clusterizacion_numerica')['Plazo_Simulado'].transform(lambda x: x.mode().iloc[0])
+
+
+# Seleccionar solo las columnas necesarias del DataFrame 'df_estimar_elasticidad' para reducir su tamaño
+# 'df_estimar_elasticidad_small' contiene las columnas esenciales para el análisis:
+# 'categoria_clusterizacion_numerica', 'rut', 'tasa_optima', 'probabilidad_aceptacion_optima', 'Probabilidad_No_Pago',
+# 'Monto_Simulado_mean', y 'Plazo_Simulado_mean'.
+df_estimar_elasticidad_small = df_estimar_elasticidad[['categoria_clusterizacion_numerica', 'rut', 'tasa_optima', 'probabilidad_aceptacion_optima', 'Probabilidad_No_Pago', 
+                                                       'Monto_Simulado_mean',
+                                                       'Plazo_Simulado_mean', 'Plazo_Simulado_min', 'Plazo_Simulado_max', 'Plazo_Simulado_mode']]
+
+# Seleccionar solo las columnas necesarias del DataFrame 'df_probabilities' para reducir su tamaño
+# 'df_probabilities_small' contiene las columnas 'categoria_clusterizacion_numerica', 'probabilidad_simular', y 'Tratamiento'.
+df_probabilities_small = df_probabilities[['categoria_clusterizacion_numerica', 'probabilidad_simular', 'Tratamiento']]
+
+# Realizar un merge entre 'df_estimar_elasticidad_small' y 'df_probabilities_small' usando 'categoria_clusterizacion_numerica' como clave
+# Esta unión ('how="left"') mantiene todas las filas de 'df_estimar_elasticidad_small' y añade la información de 'df_probabilities_small'
+# cuando hay coincidencias en 'categoria_clusterizacion_numerica'. El resultado se guarda en 'df_asignacion_de_tratamientos'.
+df_asignacion_de_tratamientos = pd.merge(df_estimar_elasticidad_small, df_probabilities_small, on='categoria_clusterizacion_numerica', how='left')
+
+
+# Crear un nombre de carpeta con una marca de tiempo actual
+# 'strftime' genera la fecha y hora actual en el formato "YYYYMMDD_HHMMSS".
+# Esto se usa para crear una carpeta única 'folder_name' donde se guardarán los archivos.
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+folder_name = f"cluster_data_{timestamp}"
+os.makedirs(folder_name, exist_ok=True)  # Crear la carpeta; 'exist_ok=True' evita errores si ya existe.
+
+# Guardar información de los clusters
+# Seleccionar las columnas relevantes sobre cada cluster desde 'df_estimar_elasticidad_small' y eliminar duplicados.
+# El DataFrame 'df_cluster_info' contiene datos únicos de cada cluster como el monto y plazo medio simulado, la probabilidad de aceptación óptima y la tasa óptima.
+df_cluster_info = df_estimar_elasticidad_small[['categoria_clusterizacion_numerica', 'probabilidad_aceptacion_optima', 'tasa_optima',
+                                                'Monto_Simulado_mean',
+                                                'Plazo_Simulado_mean', 'Plazo_Simulado_min', 'Plazo_Simulado_max', 'Plazo_Simulado_mode']].drop_duplicates()
+df_cluster_info.to_csv(f"{folder_name}/cluster_info.csv", index=False)
+
+# Guardar las probabilidades y tratamiento
+# Seleccionar columnas relevantes de 'df_probabilities_small' para almacenar la probabilidad de simulación y tratamiento asignado para cada cluster.
+# 'df_probabilities_treatment' contiene esta información única por cada combinación de cluster y tratamiento.
+df_probabilities_treatment = df_probabilities_small[['categoria_clusterizacion_numerica', 'probabilidad_simular', 'Tratamiento']].drop_duplicates()
+df_probabilities_treatment.to_csv(f"{folder_name}/probabilities_treatment.csv", index=False)
+
+# Guardar información del RUT
+# Seleccionar columnas clave sobre cada cliente ('rut') desde 'df_estimar_elasticidad_small' y eliminar duplicados.
+# 'df_rut_info' contiene el 'rut', la categoría de cluster y la probabilidad de no pago para cada cliente, sin registros duplicados.
+df_rut_info = df_estimar_elasticidad_small[['rut', 'categoria_clusterizacion_numerica', 'Probabilidad_No_Pago']].drop_duplicates()
+df_rut_info.to_csv(f"{folder_name}/rut_info.csv", index=False)
+
+
+# 6. Modelo de asignacion
+
+## Modelo de asignacion que itera por cluster
+
+def modelo_optimizacion(df_probabilities_treatment, df_rut_info, df_cluster_info, costo_sms, ejecutivos):
+    # -------------------------------
+    # Procesamiento y preprocesamiento de datos
+    # -------------------------------
+
+    # Definir la carpeta base y el mapeo de tratamientos
+    tratamiento_map = {  # Mapeo de los tratamientos específicos a identificadores numéricos
+        "Ejecutivo=0, Correos=0": 1, "Ejecutivo=0, Correos=1": 2,
+        "Ejecutivo=0, Correos=2": 3, "Ejecutivo=0, Correos=3": 4,
+        "Ejecutivo=0, Correos=4": 5, "Ejecutivo=1, Correos=0": 6,
+        "Ejecutivo=1, Correos=1": 7, "Ejecutivo=1, Correos=2": 8
+    }
+
+    # Parámetros
+    costosms = costo_sms # Costo de cada mensaje SMS
+    capacidad_ejecutivos = ejecutivos  # Capacidad máxima en términos de tiempo de los ejecutivos
+
+    # Paso 1: Cargar y mapear 'tratamiento_id' en los datos de probabilidades
+    print("Loading and processing probabilities data...")
+    df_probabilities = df_probabilities_treatment
+    df_probabilities['tratamiento_id'] = df_probabilities['Tratamiento'].map(tratamiento_map)
+
+    # Paso 2: Crear lista de tratamientos y combinar con rut_info
+    print("Merging probabilities with rut_info...")
+    df_probabilities['tratamientos'] = df_probabilities[['probabilidad_simular', 'tratamiento_id']].values.tolist()
+    grouped_prob = df_probabilities.groupby('categoria_clusterizacion_numerica')['tratamientos'].apply(list).reset_index()
+
+
+    df_rut_info1 = df_rut_info.merge(grouped_prob, on='categoria_clusterizacion_numerica', how='left')
+
+
+    # Paso 3: Combinar rut_info con cluster_info
+    print("Merging rut_info with cluster_info...")
+    df_cluster_info = df_cluster_info
+    df_rut_info2 = df_rut_info1.merge(df_cluster_info, on='categoria_clusterizacion_numerica', how='left')
+
+    # Paso 3.5: Agrupar información por cluster en 'rut_info'
+    # Agrupar por 'categoria_clusterizacion_numerica' y agregar según lo especificado
+    df_grouped = df_rut_info2.groupby('categoria_clusterizacion_numerica').agg({
+        'Probabilidad_No_Pago': 'mean',  # Promedio de probabilidad de no pago
+        'tratamientos': lambda x: list(x),  # Lista de opciones de tratamiento únicas en cada cluster
+        'Monto_Simulado_mean': 'mean',
+        'Plazo_Simulado_mean': 'mean',
+        'probabilidad_aceptacion_optima': 'mean',
+        'tasa_optima': 'mean',
+        'rut': 'count'  # Conteo del número de clientes ('rut') en cada cluster
+    }).rename(columns={'rut': 'n_clientes'}).reset_index()
+
+    # Paso 4: Calcular 'RC' (Revenue calculado)
+    print("Calculating RC...")
+    df_grouped['tasa_optima'] /= 100  # Convertir tasa óptima a decimal
+    df_grouped['RC'] = (
+        (df_grouped['Plazo_Simulado_mean'] * df_grouped['Monto_Simulado_mean'] * df_grouped['tasa_optima'] *
+        ((1 + df_grouped['tasa_optima']) ** df_grouped['Plazo_Simulado_mean'])) /
+        (((1 + df_grouped['tasa_optima']) ** df_grouped['Plazo_Simulado_mean']) - 1)
+    ) - df_grouped['Monto_Simulado_mean']
+
+    # -------------------------------
+    # Preparación de datos para optimización
+    # -------------------------------
+
+    # Convertir 'tratamientos' a un arreglo de numpy para mejorar la indexación
+    # Desarrollar y preparar 'tratamientos' para indexación adecuada
+    profits = np.array([
+        [
+            row['n_clientes'] * (row['RC'] * (1 - row['Probabilidad_No_Pago']) * row['probabilidad_aceptacion_optima'] * row['tratamientos'][0][t][0]) - 
+            (row['tratamientos'][0][t][1] * costosms)
+            for t in range(8)
+        ]
+        for _, row in df_grouped.iterrows()
+    ])
+
+    # Inicializar el modelo de optimización
+    model = Model("Maximizar_Ganancias")
+    model.ModelSense = GRB.MAXIMIZE
+
+    # Crear variables de decisión y definir el objetivo
+    n_clients, n_treatments = profits.shape
+    variables = {}
+
+    for i in range(n_clients):
+        variables[i] = {}
+        for t in range(n_treatments):
+            if profits[i, t] > 0:
+                variables[i][t] = model.addVar(vtype=GRB.BINARY, name=f"x_{i}_{t}")
+
+    model.setObjective(
+        quicksum(variables[i][t] * profits[i, t] for i in variables for t in variables[i])
+    )
+
+    # Restricción: Cada cliente recibe exactamente un tratamiento
+    for i in variables:
+        model.addConstr(quicksum(variables[i].values()) == 1, name=f"OneTreatmentPerClient_{i}")
+
+    # Restricción de capacidad para ejecutivos
+    model.addConstr(
+        quicksum(variables[i][t] * df_grouped.loc[i, 'n_clientes'] for i in variables for t in variables[i] if t in [5, 6, 7]) <= capacidad_ejecutivos,
+        name="CapacityConstraint"
+    )
+
+    # Consistencia de cluster: los clientes dentro del mismo cluster deben recibir el mismo tratamiento
+    clusters = df_grouped.groupby("categoria_clusterizacion_numerica").indices
+    for cluster_id, indices_cluster in clusters.items():
+        indices_list = list(indices_cluster)
+        leader_index = indices_list[0]
+        for t in variables[leader_index]:
+            leader_var = variables[leader_index][t]
+            for i in indices_list[1:]:
+                if t in variables[i]:
+                    model.addConstr(variables[i][t] == leader_var, name=f"ClusterConsistency_{cluster_id}_{t}")
+
+    # Optimizar el modelo
+    model.optimize()
+
+    # Verificar si la optimización fue exitosa
+    if model.Status == GRB.OPTIMAL:
+        # -------------------------------
+        # Extracción y visualización de resultados
+        # -------------------------------
+
+        print("Extracting results...")
+
+        # Asignar tratamientos por cluster basado en los resultados de la optimización
+        resultados_por_cluster = {}
+        for cluster_id, indices_cluster in clusters.items():
+            leader_index = list(indices_cluster)[0]
+            for t in variables[leader_index]:
+                if variables[leader_index][t].X > 0.5:
+                    resultados_por_cluster[cluster_id] = t + 1
+                    break
+
+        # Calcular las ganancias totales
+        ganancias_totales = model.ObjVal
+
+        # Mostrar resultados
+        print("\nTratamientos asignados por cluster:")
+        for cluster_id, tratamiento in resultados_por_cluster.items():
+            print(f"Cluster {cluster_id}: Tratamiento {tratamiento}")
+
+        print(f"\nGanancias totales: {ganancias_totales:.2f}")
+
+        # Calcular el número de ejecutivos usados y restantes
+        executives_used = sum(
+            df_grouped.loc[i, 'n_clientes'] for i in variables for t in variables[i]
+            if t in [5, 6, 7] and variables[i][t].X > 0.5
+        )
+        executives_remaining = capacidad_ejecutivos - executives_used
+
+        # Mostrar resumen de uso de ejecutivos
+        print(f"\nExecutives used: {executives_used}")
+        print(f"Executives remaining: {executives_remaining}")
+    else:
+        print("Optimization did not reach an optimal solution.")
+    print("Optimization complete.")
+    return ganancias_totales
+
+
+# # Create an empty list to store the data
+# lista_ganancias = []
+
+# # Loop to calculate ganancias_totales for different amounts of executives (g)
+# for g in range(0, 550000, 1000):
+#     ganancias_totales = modelo_optimizacion(df_probabilities_treatment, df_rut_info, df_cluster_info, 100, g)
+#     lista_ganancias.append({'cantidad de ejecutivos': g, 'ganancias': ganancias_totales})
+
+# # Convert the list of dictionaries to a pandas DataFrame
+# df_ganancias = pd.DataFrame(lista_ganancias)
+
+# # Export the DataFrame to an Excel file
+# df_ganancias.to_excel('ganancias_por_ejecutivos.xlsx', index=False)
+
+# # If you want to check the DataFrame in your script
+# print(df_ganancias)
+
+# # Export the DataFrame to an Excel file
+# df_ganancias.to_excel('ganancias_por_ejecutivos2.xlsx', index=False)
+
+# # If you want to check the DataFrame in your script
+# print(df_ganancias)
+
+# # Create an empty list to store the data
+# lista_ganancias = []
+
+# # Loop to calculate ganancias_totales for different amounts of executives (g)
+# for g in range(0, 4863240, 10000):
+#     ganancias_totales = modelo_optimizacion(df_probabilities_treatment, df_rut_info, df_cluster_info, g, 205000)
+#     lista_ganancias.append({'Costo de sms': g, 'ganancias': ganancias_totales})
+
+# # Convert the list of dictionaries to a pandas DataFrame
+# df_ganancias = pd.DataFrame(lista_ganancias)
+
+# # Export the DataFrame to an Excel file
+# df_ganancias.to_excel('ganancias_por_costosms.xlsx', index=False)
+
+# # If you want to check the DataFrame in your script
+# print(df_ganancias)
+
+# -------------------------------
+    # Procesamiento y preprocesamiento de datos
+    # -------------------------------
+
+    # Definir la carpeta base y el mapeo de tratamientos
+    tratamiento_map = {  # Mapeo de los tratamientos específicos a identificadores numéricos
+        "Ejecutivo=0, Correos=0": 1, "Ejecutivo=0, Correos=1": 2,
+        "Ejecutivo=0, Correos=2": 3, "Ejecutivo=0, Correos=3": 4,
+        "Ejecutivo=0, Correos=4": 5, "Ejecutivo=1, Correos=0": 6,
+        "Ejecutivo=1, Correos=1": 7, "Ejecutivo=1, Correos=2": 8
+    }
+
+    # Parámetros
+    costosms = 100 # Costo de cada mensaje SMS
+    capacidad_ejecutivos = 205000  # Capacidad máxima en términos de tiempo de los ejecutivos
+
+    # Paso 1: Cargar y mapear 'tratamiento_id' en los datos de probabilidades
+    print("Loading and processing probabilities data...")
+    df_probabilities = df_probabilities_treatment
+    df_probabilities['tratamiento_id'] = df_probabilities['Tratamiento'].map(tratamiento_map)
+
+    # Paso 2: Crear lista de tratamientos y combinar con rut_info
+    print("Merging probabilities with rut_info...")
+    df_probabilities['tratamientos'] = df_probabilities[['probabilidad_simular', 'tratamiento_id']].values.tolist()
+    grouped_prob = df_probabilities.groupby('categoria_clusterizacion_numerica')['tratamientos'].apply(list).reset_index()
+
+
+    df_rut_info1 = df_rut_info.merge(grouped_prob, on='categoria_clusterizacion_numerica', how='left')
+
+
+    # Paso 3: Combinar rut_info con cluster_info
+    print("Merging rut_info with cluster_info...")
+    df_cluster_info = df_cluster_info
+    df_rut_info2 = df_rut_info1.merge(df_cluster_info, on='categoria_clusterizacion_numerica', how='left')
+
+    # Paso 3.5: Agrupar información por cluster en 'rut_info'
+    # Agrupar por 'categoria_clusterizacion_numerica' y agregar según lo especificado
+    df_grouped = df_rut_info2.groupby('categoria_clusterizacion_numerica').agg({
+        'Probabilidad_No_Pago': 'mean',  # Promedio de probabilidad de no pago
+        'tratamientos': lambda x: list(x),  # Lista de opciones de tratamiento únicas en cada cluster
+        'Monto_Simulado_mean': 'mean',
+        'Plazo_Simulado_mean': 'mean',
+        'probabilidad_aceptacion_optima': 'mean',
+        'tasa_optima': 'mean',
+        'rut': 'count'  # Conteo del número de clientes ('rut') en cada cluster
+    }).rename(columns={'rut': 'n_clientes'}).reset_index()
+
+    # Paso 4: Calcular 'RC' (Revenue calculado)
+    print("Calculating RC...")
+    df_grouped['tasa_optima'] /= 100  # Convertir tasa óptima a decimal
+    df_grouped['RC'] = (
+        (df_grouped['Plazo_Simulado_mean'] * df_grouped['Monto_Simulado_mean'] * df_grouped['tasa_optima'] *
+        ((1 + df_grouped['tasa_optima']) ** df_grouped['Plazo_Simulado_mean'])) /
+        (((1 + df_grouped['tasa_optima']) ** df_grouped['Plazo_Simulado_mean']) - 1)
+    ) - df_grouped['Monto_Simulado_mean']
+
+    # -------------------------------
+    # Preparación de datos para optimización
+    # -------------------------------
+
+    # Convertir 'tratamientos' a un arreglo de numpy para mejorar la indexación
+    # Desarrollar y preparar 'tratamientos' para indexación adecuada
+    profits = np.array([
+        [
+            row['n_clientes'] * (row['RC'] * (1 - row['Probabilidad_No_Pago']) * row['probabilidad_aceptacion_optima'] * row['tratamientos'][0][t][0]) - 
+            (row['tratamientos'][0][t][1] * costosms)
+            for t in range(8)
+        ]
+        for _, row in df_grouped.iterrows()
+    ])
+
+    # Inicializar el modelo de optimización
+    model = Model("Maximizar_Ganancias")
+    model.ModelSense = GRB.MAXIMIZE
+
+    # Crear variables de decisión y definir el objetivo
+    n_clients, n_treatments = profits.shape
+    variables = {}
+
+    for i in range(n_clients):
+        variables[i] = {}
+        for t in range(n_treatments):
+            if profits[i, t] > 0:
+                variables[i][t] = model.addVar(vtype=GRB.BINARY, name=f"x_{i}_{t}")
+
+    model.setObjective(
+        quicksum(variables[i][t] * profits[i, t] for i in variables for t in variables[i])
+    )
+
+    # Restricción: Cada cliente recibe exactamente un tratamiento
+    for i in variables:
+        model.addConstr(quicksum(variables[i].values()) == 1, name=f"OneTreatmentPerClient_{i}")
+
+    # Restricción de capacidad para ejecutivos
+    model.addConstr(
+        quicksum(variables[i][t] * df_grouped.loc[i, 'n_clientes'] for i in variables for t in variables[i] if t in [5, 6, 7]) <= capacidad_ejecutivos,
+        name="CapacityConstraint"
+    )
+
+    # Consistencia de cluster: los clientes dentro del mismo cluster deben recibir el mismo tratamiento
+    clusters = df_grouped.groupby("categoria_clusterizacion_numerica").indices
+    for cluster_id, indices_cluster in clusters.items():
+        indices_list = list(indices_cluster)
+        leader_index = indices_list[0]
+        for t in variables[leader_index]:
+            leader_var = variables[leader_index][t]
+            for i in indices_list[1:]:
+                if t in variables[i]:
+                    model.addConstr(variables[i][t] == leader_var, name=f"ClusterConsistency_{cluster_id}_{t}")
+
+    # Optimizar el modelo
+    model.optimize()
+
+    # Verificar si la optimización fue exitosa
+    if model.Status == GRB.OPTIMAL:
+        # -------------------------------
+        # Extracción y visualización de resultados
+        # -------------------------------
+
+        print("Extracting results...")
+
+        # Asignar tratamientos por cluster basado en los resultados de la optimización
+        resultados_por_cluster = {}
+        for cluster_id, indices_cluster in clusters.items():
+            leader_index = list(indices_cluster)[0]
+            for t in variables[leader_index]:
+                if variables[leader_index][t].X > 0.5:
+                    resultados_por_cluster[cluster_id] = t + 1
+                    break
+
+        # Calcular las ganancias totales
+        ganancias_totales = model.ObjVal
+
+        # Mostrar resultados
+        print("\nTratamientos asignados por cluster:")
+        for cluster_id, tratamiento in resultados_por_cluster.items():
+            print(f"Cluster {cluster_id}: Tratamiento {tratamiento}")
+
+        print(f"\nGanancias totales: {ganancias_totales:.2f}")
+
+        # Calcular el número de ejecutivos usados y restantes
+        executives_used = sum(
+            df_grouped.loc[i, 'n_clientes'] for i in variables for t in variables[i]
+            if t in [5, 6, 7] and variables[i][t].X > 0.5
+        )
+        executives_remaining = capacidad_ejecutivos - executives_used
+
+        # Mostrar resumen de uso de ejecutivos
+        print(f"\nExecutives used: {executives_used}")
+        print(f"Executives remaining: {executives_remaining}")
+    else:
+        print("Optimization did not reach an optimal solution.")
+    print("Optimization complete.")
+
+### Resultados
+
+# Contar cuántas veces se asigna cada tratamiento en los resultados por cluster
+# Se utiliza un diccionario 'Counter' para contar las ocurrencias de cada tratamiento asignado en 'resultados_por_cluster'
+for cluster_id, tratamiento in resultados_por_cluster.items():
+    treatment_counts = Counter(resultados_por_cluster.values())
+
+# Imprimir el conteo de asignaciones para cada tratamiento
+# Se recorre 'treatment_counts' para mostrar cuántas veces se asignó cada tratamiento.
+# 'treatment + 1' se utiliza para mostrar el número de tratamiento en base 1, haciendo el resultado más legible.
+for treatment, count in treatment_counts.items():
+    print(f"Treatment {treatment}: {count} times")
+
+
+# Convertir el diccionario 'resultados_por_cluster' a un DataFrame
+# El diccionario 'resultados_por_cluster' contiene el ID del cluster y el tratamiento asignado a cada uno.
+# Se convierte a un DataFrame donde la primera columna es 'cluster' y la segunda 'assigned_treatment'.
+df_resultados_por_cluster = pd.DataFrame(list(resultados_por_cluster.items()), columns=["cluster", "assigned_treatment"])
+
+# Mostrar el DataFrame resultante al usuario
+df_resultados_por_cluster
+
+
+# Primer merge con 'df_rut_info'
+# Realizar una unión ('merge') entre 'df_resultados_por_cluster' y 'df_rut_info' usando 'cluster' en el primer DataFrame
+# y 'categoria_clusterizacion_numerica' en el segundo como claves de unión.
+# Esta unión permite agregar información de clientes a cada cluster con su tratamiento asignado.
+df_assigned = pd.merge(df_resultados_por_cluster, df_rut_info2, left_on='cluster', right_on='categoria_clusterizacion_numerica', how='left')
+
+# Segundo merge con 'df_grouped' para agregar la columna 'RC'
+# Realizar una unión entre 'df_assigned' y 'df_grouped' para incorporar la columna 'RC' (Revenue Calculado)
+# Usamos 'categoria_clusterizacion_numerica' como clave de unión para añadir la información de revenue calculado a cada cluster.
+df_assigned = pd.merge(df_assigned, df_grouped[['categoria_clusterizacion_numerica', 'RC']], on='categoria_clusterizacion_numerica', how='left')
+
+
+# Calcular la probabilidad de simulación para el tratamiento asignado en cada fila de 'df_assigned'
+# Se usa 'apply' con una función lambda para extraer la probabilidad de simulación correspondiente al tratamiento asignado.
+# 'row['tratamientos']' es una lista de opciones de tratamiento y 'row['assigned_treatment'] - 1' indica la posición del tratamiento.
+# Primero, se verifica que 'tratamientos' sea una lista y que el índice calculado esté dentro del rango.
+# Si estas condiciones se cumplen, se extrae la probabilidad de simulación; en caso contrario, se asigna None.
+df_assigned['probabilidad_de_simular'] = df_assigned.apply(
+    lambda row: row['tratamientos'][row['assigned_treatment'] - 1][0] 
+                if isinstance(row['tratamientos'], list) and (0 <= row['assigned_treatment'] - 1 < len(row['tratamientos'])) 
+                else None,
+    axis=1
+)
+
+
+import os
+from datetime import datetime
+
+# Crear una carpeta con un nombre basado en la fecha y hora actual
+# 'strftime' genera un timestamp en el formato "YYYYMMDD_HHMMSS" para asegurar nombres de carpeta únicos.
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+folder_name = f"assigned_treatments/assignation_{timestamp}"
+os.makedirs(folder_name, exist_ok=True)  # Crear la carpeta; 'exist_ok=True' evita errores si la carpeta ya existe.
+
+# Definir la ruta del archivo CSV dentro de la nueva carpeta
+output_path = os.path.join(folder_name, 'assigned_treatments.csv')
+
+# Guardar el DataFrame 'df_assigned' con las columnas seleccionadas en un archivo CSV
+# Se incluyen las columnas clave: 'rut', 'cluster', 'Probabilidad_No_Pago', 'RC', 'assigned_treatment',
+# 'probabilidad_de_simular', 'tasa_optima' y 'probabilidad_aceptacion_optima'.
+df_assigned[['rut', 'cluster', 'Probabilidad_No_Pago', 'RC', 'assigned_treatment', 'probabilidad_de_simular', 'tasa_optima', 'probabilidad_aceptacion_optima']].to_csv(output_path, index=False)
+
+# Imprimir mensaje de confirmación con la ubicación del archivo CSV guardado
+print(f"CSV file saved in folder: {output_path}")
+
+# 8. RL
+
+## Definicion de la clase
+
+# Configuración básica del logging
+logging.basicConfig(
+    level=logging.INFO,  # Nivel de logging (puede ser DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()  # Mostrar logs en la consola
+        # Puedes agregar FileHandler para guardar logs en un archivo si lo deseas
+    ]
+)
+logger = logging.getLogger(__name__)  # Crear un logger
+
+# Definir la clase ClusteringEnv
+class ClusteringEnv(gym.Env):
+    def __init__(self, data, df_sim_ventas_tratamiento, df_simulaciones_info):
+        super(ClusteringEnv, self).__init__()
+        
+        logger.info("Inicializando ClusteringEnv...")
+        
+        # Datos de entrada
+        self.data = data
+        self.df_sim_ventas_tratamiento = df_sim_ventas_tratamiento
+        self.df_simulaciones_info = df_simulaciones_info
+        self.best_reward = -65000000000 + -20500000000000 
+        self.best_revenue = -65000000000 + -20500000000000 
+        # Definir variables excluyendo 'rut'
+        self.variables = list(self.data.columns)
+        if 'rut' in self.variables:
+            self.variables.remove('rut')
+        logger.debug(f"Variables excluidas: {self.variables}")
+        
+        # Identificar variables categóricas y continuas
+        self.categorical_vars = self.data.select_dtypes(include=['object', 'category']).columns.tolist()
+        self.continuous_vars = self.data.select_dtypes(include=[np.number]).columns.tolist()
+        if 'rut' in self.continuous_vars:
+            self.continuous_vars.remove('rut')
+        logger.info(f"Variables categóricas: {self.categorical_vars}")
+        logger.info(f"Variables continuas: {self.continuous_vars}")
+        
+        # Parámetros de cortes para variables continuas
+        self.max_splits = 3  # Número máximo de cortes
+        self.min_splits = 2  # Número mínimo de cortes
+        logger.info(f"Parámetros de splits - Max: {self.max_splits}, Min: {self.min_splits}")
+        
+        # Penalización por número de clusters
+        self.penalty_factor = 500000000  # Ajusta este valor según tus necesidades
+        self.executives_remaining = 0
+        logger.debug(f"Factor de penalización por cluster: {self.penalty_factor}")
+        
+        # Crear la lista de acciones
+        self.action_list = self.create_action_list()
+        logger.info(f"Número de acciones posibles: {len(self.action_list)}")
+        
+        # Inicializar el estado y otros atributos necesarios
+        self.reset()  # Esto inicializa self.included_vars y self.splits
+        
+        # Definir el espacio de acciones y observaciones
+        self.action_space = spaces.Discrete(len(self.action_list))
+        state_size = self.get_state().shape[0]
+        self.observation_space = spaces.Box(low=0, high=1, shape=(state_size,), dtype=np.float32)
+        logger.debug(f"Tamaño del estado: {state_size}")
+        
+        # Inicializar el contador de pasos
+        self.current_step = 0
+        self.max_steps = 20 # Número máximo de pasos por episodio
+        self.splits_quantiles = {var: [] for var in self.continuous_vars}
+    
+    def reset(self, seed=None, options=None):
+        # Reiniciar el entorno al estado inicial
+        logger.info("Reiniciando el entorno...")
+        self.executives_remaining = 0
+        self.included_vars = {var: 0 for var in self.variables}  # Inicialmente, todas las variables excluidas
+        self.splits = {var: [] for var in self.continuous_vars}  # Inicialmente, sin cortes
+        self.state = self.get_state()
+        self.current_step = 0
+        logger.info(f"Estado reiniciado: {self.state}")
+        self.splits_quantiles = {var: [] for var in self.continuous_vars}
+        return self.state, {}
+    
+    def get_state(self):
+        # Representar el estado actual como un array
+        state = []
+        for var in self.variables:
+            included = self.included_vars[var]
+            state.append(included)
+            if var in self.continuous_vars and included:
+                splits = self.splits[var]
+                min_val = self.data[var].min()
+                max_val = self.data[var].max()
+                if max_val == min_val:
+                    normalized_splits = [0] * self.max_splits
+                else:
+                    normalized_splits = [(s - min_val) / (max_val - min_val) for s in splits]
+                    # Rellenar con ceros para tener longitud fija
+                    normalized_splits += [0] * (self.max_splits - len(normalized_splits))
+                    normalized_splits = normalized_splits[:self.max_splits]
+                state.extend(normalized_splits)
+            elif var in self.continuous_vars:
+                # Si la variable no está incluida, agregar ceros
+                state.extend([0] * self.max_splits)
+        return np.array(state, dtype=np.float32)
+    
+    def create_action_list(self):
+        actions = []
+        # Acciones para incluir o excluir variables
+        for var in self.variables:
+            actions.append(('toggle_variable', var, {}))
+        # Acciones para ajustar los cortes de variables continuas
+        for var in self.continuous_vars:
+            # Aumentar número de cortes
+            actions.append(('adjust_splits', var, {'operation': 'increase'}))
+            # Disminuir número de cortes
+            actions.append(('adjust_splits', var, {'operation': 'decrease'}))
+            # Mover cada punto de corte hacia arriba o abajo
+            for index in range(self.max_splits):
+                actions.append(('adjust_splits', var, {'operation': 'move', 'index': index, 'amount': +1}))
+                actions.append(('adjust_splits', var, {'operation': 'move', 'index': index, 'amount': -1}))
+        print(actions)
+        return actions
+    
+    def step(self, action_index):
+        logger.debug(f"Ejecutando acción: {self.action_list[action_index]}")
+        # Aplicar la acción al estado actual
+        action = self.action_list[action_index]
+        self.apply_action(action)
+        
+        # Recalcular los clusters
+        logger.info("Recalculando clusters...")
+        df_clusters = self.perform_clustering()
+        
+        # Recalcular las métricas y obtener la recompensa
+        try:
+            total_revenue, num_clusters = self.recalculate_metrics(df_clusters)
+            # Define constants
+            MAX_TOTAL_REVENUE = 160_000_000_000
+            BASE_REVENUE = 65_000_000_000
+            MAX_NUM_CLUSTERS = 100
+            MAX_PENALTY = 0.5
+
+            # Normalize total_revenue
+            normalized_revenue = (total_revenue - BASE_REVENUE) / (MAX_TOTAL_REVENUE - BASE_REVENUE)
+
+            # Scale the penalty dynamically
+            scaled_penalty = MAX_PENALTY * (num_clusters / MAX_NUM_CLUSTERS)
+
+            # Adjust the reward
+            reward = normalized_revenue - scaled_penalty
+            logger.info(f"Recompensa calculada: {reward} (Revenue: {total_revenue}, Clusters: {num_clusters})")
+            # Guardar la mejor configuración encontrada
+            if reward > self.best_reward:
+                self.best_reward = reward
+                self.best_revenue = total_revenue
+
+                # Variables usadas en el mejor clustering
+                self.best_variables = [
+                    var for var, included in self.included_vars.items() if included == 1
+                ]
+
+                # Cortes de variables continuas
+                self.best_splits = {
+                    var: self.splits[var] for var in self.continuous_vars if self.included_vars[var] == 1
+                }
+
+                logger.info(f"Nueva mejor configuración encontrada:")
+                logger.info(f"Variables: {self.best_variables}")
+                logger.info(f"Cortes: {self.best_splits}")
+                logger.info(f"Recompensa: {self.best_reward}")
+                logger.info(f"Revenue: {self.best_revenue}")
+                logger.info(f"Clusters: {num_clusters}")
+                # Guardar la mejor configuración en un archivo .txt
+                with open("best_cluster_info.txt", "w") as file:
+                    file.write("Mejor configuración de clustering encontrada:\n")
+                    file.write(f"Recompensa: {self.best_reward}\n")
+                    file.write(f"Revenue: {self.best_revenue}\n")
+                    file.write(f"Clusters: {num_clusters}\n")
+                    file.write(f"Variables usadas: {', '.join(self.best_variables)}\n")
+                    file.write("Cortes de variables continuas:\n")
+                    for var, splits in self.best_splits.items():
+                        file.write(f"  - {var}: {splits}\n")
+
+        except Exception as e:
+            # En caso de error, asignar una recompensa negativa
+            logger.error(f"Error en recalculate_metrics: {e}")
+            reward = -0.5
+            total_revenue = 0
+            num_clusters = 0
+        
+        # Incrementar el contador de pasos
+        self.current_step += 1
+        done = self.current_step >= self.max_steps
+        logger.info(f"Estado de done (paso {self.current_step}): {done}")
+        
+        # En Gymnasium, también se debe definir `truncated`. Aquí lo dejamos como False.
+        truncated = False
+        
+        # Actualizar el estado
+        self.state = self.get_state()
+        
+        # Crear un diccionario de información
+        info = {
+            'total_revenue': total_revenue,
+            'num_clusters': num_clusters
+        }
+        
+        logger.info(f"Estado actual: {self.state}")
+        logger.info(f"Paso {self.current_step}/{self.max_steps} completado.")
+                
+        return self.state, reward, done, truncated, info
+    
+    def initialize_splits(self, var):
+        # Initialize with a split at a quantile (multiples of 5% between 5% and 95%)
+        possible_quantiles = np.arange(0.05, 0.96, 0.05)  # 5%, 10%, ..., 95%
+        initial_quantile = np.random.choice(possible_quantiles)
+        initial_value = self.data[var].quantile(initial_quantile)
+        self.splits_quantiles[var] = [initial_quantile]
+        self.splits[var] = [initial_value]
+
+    def apply_action(self, action):
+        # Aplicar la acción al estado actual
+        action_type, var, params = action
+        logger.info(f"Aplicando acción tipo: {action_type} sobre variable: {var} con parámetros: {params}")
+        
+        if action_type == 'toggle_variable':
+            # Incluir o excluir la variable
+            self.included_vars[var] = 1 - self.included_vars[var]
+            logger.info(f"Variable '{var}' incluida: {self.included_vars[var]}")
+            if var in self.continuous_vars and self.included_vars[var]:
+                # Inicializar cortes si la variable es incluida
+                if not self.splits[var]:
+                    self.initialize_splits(var)
+                    logger.info(f"Cortes inicializados para variable '{var}': {self.format_splits_with_quantiles(var)}")
+                else:
+                    logger.info(f"Variable '{var}' ya tiene cortes: {self.format_splits_with_quantiles(var)}")
+                    
+        elif action_type == 'adjust_splits':
+            # Verificar que la acción es válida
+            if var in self.continuous_vars and self.included_vars[var]:
+                operation = params.get('operation')
+                index = params.get('index', 0)
+                amount = params.get('amount', 0)
+                
+                if operation == 'increase':
+                    if len(self.splits[var]) < self.max_splits:
+                        self.add_split(var)
+                        logger.info(f"Cortes para variable '{var}': {self.format_splits_with_quantiles(var)}")
+                    else:
+                        logger.warning(f"No se puede aumentar el número de cortes para '{var}': ya se alcanzó el máximo.")
+                        new_action_index = np.random.choice([i for i, a in enumerate(self.action_list) if a[1] == var])
+                        logger.info(f"Seleccionando nueva acción: {self.action_list[new_action_index]}")
+                        self.apply_action(self.action_list[new_action_index])
+                        
+                elif operation == 'decrease':
+                    if len(self.splits[var]) > self.min_splits:
+                        self.remove_split(var)
+                        logger.info(f"Cortes para variable '{var}': {self.format_splits_with_quantiles(var)}")
+                    else:
+                        logger.warning(f"No se puede disminuir el número de cortes para '{var}': ya se alcanzó el mínimo.")
+                        new_action_index = np.random.choice([i for i, a in enumerate(self.action_list) if a[1] == var])
+                        logger.info(f"Seleccionando nueva acción: {self.action_list[new_action_index]}")
+                        self.apply_action(self.action_list[new_action_index])
+                        
+                elif operation == 'move':
+                    # Verificar si el índice es válido
+                    logger.info(f"Moviendo corte en índice {index} para '{var}' por cantidad {amount} que actualmente tiene {self.splits[var]} cortes.")
+                    if 0 <= index < len(self.splits[var]):
+                        self.move_split(var, index, amount)
+                        logger.info(f"Cortes para variable '{var}': {self.format_splits_with_quantiles(var)}")
+                    else:
+                        logger.warning(f"No se puede mover el corte en índice {index} para '{var}': índice inválido.")
+                        new_action_index = np.random.choice([i for i, a in enumerate(self.action_list) if a[1] == var])
+                        logger.info(f"Seleccionando nueva acción: {self.action_list[new_action_index]}")
+                        self.apply_action(self.action_list[new_action_index])
+                        
+            else:
+                # Si la acción es inválida, seleccionar una nueva acción válida
+                logger.warning(f"No se puede ajustar separaciones para '{var}': no es continua o no está incluida en la clusterización.")
+                new_action_index = np.random.choice([i for i, a in enumerate(self.action_list) if a[1] == var])
+                logger.info(f"Seleccionando nueva acción: {self.action_list[new_action_index]}")
+                self.apply_action(self.action_list[new_action_index])
+                return  # Salir para evitar ajustes adicionales
+        else:
+            logger.warning(f"Acción desconocida: {action_type}")
+
+    def sort_splits(self, var):
+        # Ordenar los índices según los cuantiles
+        sorted_indices = np.argsort(self.splits_quantiles[var])
+        # Reordenar los splits y los cuantiles
+        self.splits_quantiles[var] = [self.splits_quantiles[var][i] for i in sorted_indices]
+        self.splits[var] = [self.splits[var][i] for i in sorted_indices]
+
+    def remove_split(self, var):
+        if len(self.splits[var]) == 0:
+            logger.warning(f"No hay splits para eliminar en '{var}'.")
+            return
+        # Eliminar el último split (o puedes definir una lógica diferente)
+        removed_quantile = self.splits_quantiles[var].pop()
+        removed_value = self.splits[var].pop()
+        # Ordenar los splits y los cuantiles
+        self.sort_splits(var)
+        logger.info(f"Split eliminado para '{var}': cuantil {removed_quantile:.2f}, valor {removed_value}")
+
+    def add_split(self, var):
+        # Add a new split at any available quantile (multiples of 5%) that does not coincide with existing splits
+        possible_quantiles = set(np.arange(0.05, 0.96, 0.05))  # 5% to 95%
+        existing_quantiles = set(self.splits_quantiles[var])
+        available_quantiles = list(possible_quantiles - existing_quantiles)
+        if not available_quantiles:
+            logger.warning(f"No hay cuantiles disponibles para agregar un nuevo corte en '{var}'.")
+            return
+        # Select a quantile (you can implement a strategy; here we choose the median of available quantiles)
+        new_quantile = np.random.choice(available_quantiles)
+        new_value = self.data[var].quantile(new_quantile)
+        self.splits_quantiles[var].append(new_quantile)
+        self.splits[var].append(new_value)
+        # Sort the splits and quantiles
+        sorted_indices = np.argsort(self.splits_quantiles[var])
+        self.splits_quantiles[var] = [self.splits_quantiles[var][i] for i in sorted_indices]
+        self.splits[var] = [self.splits[var][i] for i in sorted_indices]
+        self.sort_splits(var)
+        logger.info(f"Agregando split para '{var}' en cuantil {new_quantile:.2f}, valor {new_value}")
+
+    def move_split(self, var, index, amount):
+        # Move the split at 'index' by an amount in increments of 5% quantiles
+        step_size = 0.05  # 5% quantile increments
+        if len(self.splits[var]) == 0:
+            logger.warning(f"No hay cortes para mover en la variable '{var}'.")
+            return
+        if not (0 <= index < len(self.splits[var])):
+            logger.warning(f"Índice {index} fuera de rango para los cortes de '{var}'.")
+            return
+        current_quantile = self.splits_quantiles[var][index]
+        new_quantile = current_quantile + (amount * step_size)
+        # Ensure the new quantile is between 5% and 95%
+        new_quantile = max(0.05, min(new_quantile, 0.95))
+        # Avoid coinciding with existing splits
+        existing_quantiles = self.splits_quantiles[var][:index] + self.splits_quantiles[var][index+1:]
+        while new_quantile in existing_quantiles:
+            new_quantile += amount * step_size
+            if new_quantile < 0.05 or new_quantile > 0.95:
+                logger.warning(f"No se puede mover el corte sin coincidir con otro en '{var}'.")
+                new_action_index = np.random.choice([i for i, a in enumerate(self.action_list) if a[1] == var])
+                logger.info(f"Seleccionando nueva acción: {self.action_list[new_action_index]}")
+                self.apply_action(self.action_list[new_action_index])
+        # Update the quantile and the split value
+        self.splits_quantiles[var][index] = new_quantile
+        new_value = self.data[var].quantile(new_quantile)
+        self.splits[var][index] = new_value
+        # Ordenar los splits y los cuantiles
+        self.sort_splits(var)
+        logger.info(f"Moviendo split para '{var}' en índice {index}: cuantil de {current_quantile:.2f} a {new_quantile:.2f}, valor de {new_value}")
+
+    def format_splits_with_quantiles(self, var):
+        splits_formatted = []
+        for quantile, split in zip(self.splits_quantiles[var], self.splits[var]):
+            splits_formatted.append({'value': split, 'quantile': quantile})
+        return splits_formatted
+
+    def perform_clustering(self):
+        logger.info("Realizando clustering...")
+        # Perform clustering based on the current configuration
+        df = self.data.copy()
+        for var in self.variables:
+            if self.included_vars[var]:
+                if var in self.categorical_vars:
+                    df[var + '_cluster'] = df[var]
+                    logger.info(f"Variable categórica '{var}' separada en los grupos: {df[var + '_cluster'].unique()}")
+                elif var in self.continuous_vars:
+                    splits = self.splits[var]
+                    if not splits:
+                        # Si no hay splits, asignar todo al mismo bin
+                        df[var + '_cluster'] = 0
+                    else:
+                        splits = sorted(set(splits))  # Asegurarse de que los splits estén ordenados y sin duplicados
+                        if len(splits) == 1:
+                            # Si solo hay un valor único, asignar todo en dos bins: menor y mayor/igual
+                            bins = [-np.inf, splits[0], np.inf]
+                            labels = [f'{var}_bin_0', f'{var}_bin_1']
+                        else:
+                            # Crear bins normalmente
+                            bins = [-np.inf] + splits + [np.inf]
+                            labels = [f'{var}_bin_{i}' for i in range(len(bins)-1)]
+                        
+                        df[var + '_cluster'] = pd.cut(df[var], bins=bins, labels=labels)
+                        logger.info(f"Cortes para variable '{var}': {self.format_splits_with_quantiles(var)}")
+        # Combine the cluster variables to form the clustering category
+        cluster_vars = [var + '_cluster' for var in self.variables if self.included_vars[var]]
+        logger.info(f"Variables incluidas en clusterización: {cluster_vars}")
+        if cluster_vars:
+            df['categoria_clusterizacion'] = df[cluster_vars].astype(str).agg(' '.join, axis=1)
+            df['categoria_clusterizacion_numerica'] = df['categoria_clusterizacion'].astype('category').cat.codes
+            logger.info(f"Clusters formados: {df['categoria_clusterizacion_numerica'].nunique()}")
+        else:
+            # If no variables are included, assign all data to cluster 0
+            df['categoria_clusterizacion_numerica'] = 0
+            logger.debug("No se incluyeron variables, todos los datos asignados al cluster 0.")
+        self.current_clusters = df[['rut', 'categoria_clusterizacion_numerica']]
+        num_clusters = df['categoria_clusterizacion_numerica'].nunique()
+        logger.info(f"Variables incluidas en este clustering: {cluster_vars}")
+        logger.info(f"Clustering completado. Número de clusters: {num_clusters}")
+        return df
+    
+    def function_estimar_elasticidad(self, df_estimar_elasticidad):
+        logger.info("Estimando elasticidad...")
+
+        # Obtener los números únicos de cada cluster
+        cluster_numbers = df_estimar_elasticidad['categoria_clusterizacion_numerica'].unique()
+        logger.debug(f"Número de clusters para estimar elasticidad: {len(cluster_numbers)}")
+
+        # Definir la función que procesará un solo cluster
+        def process_cluster(cluster_num):
+            logger.debug(f"Procesando cluster {cluster_num}...")
+            # Filtrar los datos correspondientes al cluster actual
+            df_cluster = df_estimar_elasticidad[df_estimar_elasticidad['categoria_clusterizacion_numerica'] == cluster_num].copy()
+
+            # Asegurarse de que existen datos para ambos casos: venta == 1 y venta == 0
+            if df_cluster.empty or df_cluster['venta'].isnull().all():
+                logger.warning(f"Cluster {cluster_num} está vacío o todas las ventas son nulas. Se salta.")
+                return None  # Retornar None para indicar que no hay resultados para este cluster
+
+            # Remover filas donde 'venta' o 'Tasa_Simulado' son nulos o infinitos
+            df_cluster = df_cluster.replace([np.inf, -np.inf], np.nan)
+            df_cluster = df_cluster.dropna(subset=['venta', 'Tasa_Simulado', 'Plazo_Simulado', 'Monto_Simulado', 'Probabilidad_No_Pago'])
+
+            # Saltar el cluster si no hay suficientes puntos de datos
+            if df_cluster.shape[0] < 10:
+                logger.warning(f"Cluster {cluster_num} tiene menos de 10 registros después de limpiar. Se salta.")
+                return None
+
+            # Extraer las variables 'venta' (como variable dependiente) y 'Tasa_Simulado' (como predictor)
+            y = df_cluster['venta']
+            X = df_cluster[['Tasa_Simulado']]
+
+            # Añadir un término constante para el intercepto
+            X = sm.add_constant(X)
+
+            # Remover filas con valores NaN o Inf en X o y
+            is_finite = np.isfinite(X).all(1) & np.isfinite(y)
+            X = X[is_finite]
+            y = y[is_finite]
+
+            # Asegurarse de que después de remover NaN/Inf, todavía hay suficientes datos
+            if len(y) < 10:
+                logger.warning(f"Cluster {cluster_num} tiene menos de 10 registros después de filtrar finitos. Se salta.")
+                return None
+
+            # Ajustar el modelo de regresión logística
+            logit_model = sm.Logit(y, X)
+            try:
+                result = logit_model.fit(disp=0)
+                logger.debug(f"Modelo ajustado para cluster {cluster_num}.")
+            except Exception as e:
+                logger.error(f"No se pudo ajustar el modelo para el cluster {cluster_num}: {e}")
+                return None
+
+            # Crear una cuadrícula de valores de 'Tasa_Simulado' para predicciones
+            tasa_min = df_cluster['Tasa_Simulado'].min()
+            tasa_max = df_cluster['Tasa_Simulado'].max()
+            tasas_grid = np.linspace(tasa_min, tasa_max, 105)
+
+            # Predecir la probabilidad de aceptación usando el modelo ajustado
+            X_grid = sm.add_constant(tasas_grid)
+            acceptance_probability = result.predict(X_grid)
+
+            # Asegurar que las probabilidades están en el rango [0, 1]
+            acceptance_probability = np.clip(acceptance_probability, 0, 1)
+
+            # Calcular valores medios necesarios para el cálculo de revenue
+            n = df_cluster['Plazo_Simulado'].mean()
+            vp = df_cluster['Monto_Simulado'].mean()
+            pnp = df_cluster['Probabilidad_No_Pago'].mean()
+            data = {
+                'Plazo_Simulado_medio': n, 
+                'Monto_Simulado_medio': vp, 
+                'Probabilidad_No_Pago_media': pnp
+            }
+
+            # Calcular el revenue potencial
+            i = tasas_grid / 100  # Convertir a decimal
+            one_plus_i_pow_n = np.power(1 + i, n)
+            annuity_factor = (i * one_plus_i_pow_n) / (one_plus_i_pow_n - 1)
+            revenue = (n * vp * annuity_factor) - vp
+            potential_revenue = revenue * (1 - pnp)
+
+            # Calcular el promedio de simulaciones por fecha
+            df_cluster_simulaciones_1 = df_cluster[df_cluster['simulo'] == 1]
+            num_dates = df_cluster_simulaciones_1['fecha'].nunique()
+            total_simulaciones = df_cluster_simulaciones_1['simulo'].sum()
+            simulaciones_medias = total_simulaciones / num_dates if num_dates else 0
+
+            # Saltar el cluster si no hay simulaciones
+            if simulaciones_medias == 0:
+                logger.warning(f"Cluster {cluster_num} no tiene simulaciones medias. Se salta.")
+                return None
+
+            # Calcular el revenue esperado
+            expected_revenue = acceptance_probability * potential_revenue * simulaciones_medias
+
+            # Encontrar la tasa que maximiza el revenue esperado
+            idx_max = np.argmax(expected_revenue)
+            max_price = tasas_grid[idx_max]
+            max_expected_revenue = expected_revenue[idx_max]
+
+            # Probabilidad de aceptación en la tasa óptima
+            prob_aceptacion_optima = acceptance_probability[idx_max]
+
+            # Número esperado de créditos aceptados
+            num_creditos_aceptados = round(prob_aceptacion_optima * simulaciones_medias)
+
+            # Número de clientes únicos en el cluster
+            num_clients = df_cluster['rut'].nunique()
+
+            # Imprimir resultados para cada cluster
+            logger.info(f'Cluster {cluster_num}:')
+            logger.info(f'- Precio Máx. Revenue Esperado = {max_price:.2f}%')
+            logger.info(f'- Revenue Esperado Máximo = {max_expected_revenue:,.2f}')
+            logger.info(f'- Número de clientes en el cluster = {num_clients}')
+            logger.info(f'- Número de simulaciones en el cluster = {simulaciones_medias:.2f}')
+            logger.info(f'- Probabilidad de aceptación en el precio óptimo = {prob_aceptacion_optima:.4f}')
+            logger.info(f'- Número esperado de créditos aceptados = {num_creditos_aceptados}')
+            logger.info(f'- Monto medio simulado = {data["Monto_Simulado_medio"]:,.2f}')
+            logger.info(f'- Plazo medio simulado = {data["Plazo_Simulado_medio"]:,.2f}')
+            logger.info(f'- Probabilidad de no pago media = {data["Probabilidad_No_Pago_media"]:.4f}\n')
+
+            # Preparar los resultados para este cluster
+            cluster_result = {
+                'categoria_clusterizacion_numerica': cluster_num,
+                'tasa_optima': max_price,
+                'probabilidad_aceptacion_optima': prob_aceptacion_optima,
+                'revenue_esperado_maximo': max_expected_revenue,
+                'numero_clientes': num_clients,
+                'numero_simulaciones_medias': simulaciones_medias,
+                'numero_creditos_esperados': num_creditos_aceptados,
+                'monto_medio_simulado': data["Monto_Simulado_medio"],
+                'plazo_medio_simulado': data["Plazo_Simulado_medio"],
+                'probabilidad_no_pago_media': data["Probabilidad_No_Pago_media"]
+            }
+
+            return cluster_result
+
+        # Ejecutar el procesamiento de clusters en paralelo
+        num_cores = -1  # Usar todos los núcleos disponibles
+        results = Parallel(n_jobs=num_cores)(
+            delayed(process_cluster)(cluster_num) for cluster_num in cluster_numbers
+        )
+
+        # Filtrar los resultados que no son None
+        cluster_results = [res for res in results if res is not None]
+
+        # Si no hay resultados, retornar valores por defecto
+        if not cluster_results:
+            logger.warning("No se obtuvieron resultados de elasticidad para ningún cluster.")
+            total_revenue = 0
+            total_clientes = 0
+            total_simulaciones = 0
+            total_creditos = 0
+            df_cluster_results = pd.DataFrame()
+        else:
+            # Crear un DataFrame a partir de cluster_results
+            df_cluster_results = pd.DataFrame(cluster_results)
+
+            # Imprimir resultados globales
+            total_revenue = df_cluster_results['revenue_esperado_maximo'].sum()
+            total_clientes = df_cluster_results['numero_clientes'].sum()
+            total_simulaciones = df_cluster_results['numero_simulaciones_medias'].sum()
+            total_creditos = df_cluster_results['numero_creditos_esperados'].sum()
+
+            logger.info(f"El revenue total esperado es: {total_revenue:,.2f} con un total de {total_clientes} clientes, "
+                        f"{total_simulaciones:,.2f} simulaciones, y {total_creditos} créditos.")
+
+        # Incorporar los resultados por cluster de 'df_cluster_results' a 'df_estimar_elasticidad'
+        if not df_cluster_results.empty:
+            df_estimar_elasticidad = df_estimar_elasticidad.merge(
+                df_cluster_results[['categoria_clusterizacion_numerica', 'tasa_optima', 'probabilidad_aceptacion_optima']],
+                on='categoria_clusterizacion_numerica', 
+                how='left'
+            )
+        else:
+            df_estimar_elasticidad['tasa_optima'] = np.nan
+            df_estimar_elasticidad['probabilidad_aceptacion_optima'] = np.nan
+
+        return {
+            'df_estimar_elasticidad': df_estimar_elasticidad,
+            'total_revenue': total_revenue,
+            'total_clientes': total_clientes,
+            'total_simulaciones': total_simulaciones,
+            'total_creditos': total_creditos
+        }
+    
+    def function_estimar_respuesta_a_tratamiento(self, df_estimar_elasticidad, df_simulaciones_info): #df1 es df_estimar_elasticidad y df2 es df_simulaciones_info
+        # Paso 1: Preparación de datos y mapeo de clusters
+        # Eliminar duplicados en 'df1' para tener un valor único de 'categoria_clusterizacion_numerica' por cada 'rut'.
+        df_estimar_elasticidad_unique = df_estimar_elasticidad.drop_duplicates(subset='rut')
+
+        # Crear un mapeo de 'rut' a 'categoria_clusterizacion_numerica' para asociar cada cliente a su cluster numérico.
+        rut_cluster_map = df_estimar_elasticidad_unique.set_index('rut')['categoria_clusterizacion_numerica']
+
+        # Mapear la categoría de cluster a cada 'rut' en 'df2' usando el mapeo creado
+        df_simulaciones_info['categoria_clusterizacion_numerica'] = df_simulaciones_info['rut'].map(rut_cluster_map)
+
+        # Eliminar filas donde 'categoria_clusterizacion_numerica' es nulo, es decir, aquellos 'rut' sin mapeo de cluster.
+        df_simulaciones_info = df_simulaciones_info.dropna(subset=['categoria_clusterizacion_numerica'])
+
+        # Conversión de tipos de datos
+        # Convertir 'categoria_clusterizacion_numerica' a entero para garantizar un tipo de dato consistente.
+        df_simulaciones_info['categoria_clusterizacion_numerica'] = df_simulaciones_info['categoria_clusterizacion_numerica'].astype(int)
+
+        # Convertir 'simulo' a numérico, reemplazando valores nulos por 0 y asegurando que sea un tipo de dato entero.
+        df_simulaciones_info['simulo'] = pd.to_numeric(df_simulaciones_info['simulo'], errors='coerce').fillna(0).astype(int)
+
+        # Convertir 'Tratamiento' a tipo de categoría para optimizar espacio y realizar operaciones categóricas.
+        df_simulaciones_info['Tratamiento'] = df_simulaciones_info['Tratamiento'].astype('category')
+
+        # Paso 2: Calcular el caso total (entradas por tratamiento sin importar el valor de 'simulo')
+        # Agrupar por 'categoria_clusterizacion_numerica' y 'Tratamiento' para contar el número total de registros en cada combinación.
+        total_entries_per_cluster_treatment = df_simulaciones_info.groupby(['categoria_clusterizacion_numerica', 'Tratamiento']).size().reset_index(name='caso_total')
+
+        # Paso 3: Calcular el caso favorable (entradas por tratamiento cuando 'simulo' == 1)
+        # Filtrar filas donde 'simulo' es 1 (clientes que realizaron una simulación)
+        df_simulations = df_simulaciones_info[df_simulaciones_info['simulo'] == 1]
+
+        # Agrupar por 'categoria_clusterizacion_numerica' y 'Tratamiento' para contar el número de registros favorables (simulaciones).
+        favorable_entries_per_cluster_treatment = df_simulations.groupby(['categoria_clusterizacion_numerica', 'Tratamiento']).size().reset_index(name='caso_favorable')
+
+        # Paso 4: Calcular la probabilidad de simulación como caso favorable / caso total
+        # Realizar un merge entre 'total_entries_per_cluster_treatment' y 'favorable_entries_per_cluster_treatment' en las columnas de cluster y tratamiento.
+        df_probabilities = total_entries_per_cluster_treatment.merge(
+            favorable_entries_per_cluster_treatment,
+            on=['categoria_clusterizacion_numerica', 'Tratamiento'],
+            how='left'
+        )
+
+        # Llenar valores nulos en 'caso_favorable' con 0, asegurando que solo las columnas numéricas estén afectadas.
+        df_probabilities['caso_favorable'] = df_probabilities['caso_favorable'].fillna(0).astype(int)
+
+        # Asegurar que 'caso_total' sea de tipo entero para evitar inconsistencias en los conteos.
+        df_probabilities['caso_total'] = df_probabilities['caso_total'].astype(int)
+
+        # Calcular la probabilidad de simulación como el cociente entre 'caso_favorable' y 'caso_total'.
+        df_probabilities['probabilidad_simular'] = df_probabilities['caso_favorable'] / df_probabilities['caso_total']
+
+        # Organizar las columnas del DataFrame resultante para facilitar su análisis.
+        df_probabilities = df_probabilities[[
+            'categoria_clusterizacion_numerica',
+            'Tratamiento',
+            'probabilidad_simular',
+            'caso_favorable',
+            'caso_total'
+        ]]
+
+        logger.info("Estimación de respuesta a tratamientos completada.")
+        return df_probabilities
+
+    def function_modelo_asignacion_tratamientos(self, df_cluster_info, df_probabilities_treatment, df_rut_info, costo_sms, capacidad_ejecutivos):
+        logger.info("Iniciando modelo de asignación de tratamientos...")
+        try:
+            # Definir el mapeo de tratamientos
+            tratamiento_map = {  # Mapeo de los tratamientos específicos a identificadores numéricos
+                "Ejecutivo=0, Correos=0": 1, "Ejecutivo=0, Correos=1": 2,
+                "Ejecutivo=0, Correos=2": 3, "Ejecutivo=0, Correos=3": 4,
+                "Ejecutivo=0, Correos=4": 5, "Ejecutivo=1, Correos=0": 6,
+                "Ejecutivo=1, Correos=1": 7, "Ejecutivo=1, Correos=2": 8
+            }
+
+            # Parámetros
+            costosms = costo_sms  # Costo de cada mensaje SMS
+            capacidad_ejecutivos = capacidad_ejecutivos  # Capacidad máxima en términos de tiempo de los ejecutivos
+
+            # Paso 1: Procesar probabilidades y asignar IDs de tratamiento
+            df_probabilities = df_probabilities_treatment.copy()
+            df_probabilities['tratamiento_id'] = df_probabilities['Tratamiento'].map(tratamiento_map)
+            if df_probabilities['tratamiento_id'].isnull().any():
+                logger.warning("Algunos tratamientos no fueron mapeados correctamente a 'tratamiento_id'. Revisar 'tratamiento_map'.")
+
+            # Paso 2: Crear lista de tratamientos y combinar con rut_info
+            df_probabilities['tratamientos'] = df_probabilities[['probabilidad_simular', 'tratamiento_id']].values.tolist()
+            grouped_prob = df_probabilities.groupby('categoria_clusterizacion_numerica')['tratamientos'].apply(list).reset_index()
+
+            df_rut_info = df_rut_info.copy()
+            df_rut_info = df_rut_info.merge(grouped_prob, on='categoria_clusterizacion_numerica', how='left')
+            if df_rut_info['tratamientos'].isnull().any():
+                logger.warning("Algunos clusters no tienen tratamientos asignados.")
+
+            # Paso 3: Combinar rut_info con cluster_info
+            df_cluster_info = df_cluster_info.copy()
+            df_rut_info = df_rut_info.merge(df_cluster_info, on='categoria_clusterizacion_numerica', how='left')
+            if df_rut_info.isnull().any().any():
+                logger.warning("Algunas combinaciones de clusters no están completas en rut_info.")
+
+            # Paso 3.5: Agrupar información por cluster en 'rut_info'
+            df_grouped = df_rut_info.groupby('categoria_clusterizacion_numerica').agg({
+                'Probabilidad_No_Pago': 'mean',  # Promedio de probabilidad de no pago
+                'tratamientos': lambda x: list(x),  # Lista de opciones de tratamiento únicas en cada cluster
+                'Monto_Simulado_mean': 'mean',
+                'Plazo_Simulado_mean': 'mean',
+                'probabilidad_aceptacion_optima': 'mean',
+                'tasa_optima': 'mean',
+                'rut': 'count'  # Conteo del número de clientes ('rut') en cada cluster
+            }).rename(columns={'rut': 'n_clientes'}).reset_index()
+            logger.debug(f"Datos agrupados por cluster: {df_grouped.head()}")
+
+            # Paso 4: Calcular 'RC' (Revenue calculado)
+            df_grouped['tasa_optima'] /= 100  # Convertir tasa óptima a decimal
+            df_grouped['RC'] = (
+                (df_grouped['Plazo_Simulado_mean'] * df_grouped['Monto_Simulado_mean'] * df_grouped['tasa_optima'] *
+                ((1 + df_grouped['tasa_optima']) ** df_grouped['Plazo_Simulado_mean'])) /
+                (((1 + df_grouped['tasa_optima']) ** df_grouped['Plazo_Simulado_mean']) - 1)
+            ) - df_grouped['Monto_Simulado_mean']
+            logger.debug(f"RC calculado: {df_grouped['RC'].head()}")
+
+            # -------------------------------
+            # Preparación de datos para optimización
+            # -------------------------------
+
+            try:
+                # Convertir 'tratamientos' a un arreglo de numpy para mejorar la indexación
+                profits = np.array([
+                    [
+                        row['n_clientes'] * (row['RC'] * (1 - row['Probabilidad_No_Pago']) * row['probabilidad_aceptacion_optima'] * row['tratamientos'][0][t][0]) - 
+                        (row['tratamientos'][0][t][1] * costosms)
+                        for t in range(8)
+                    ]
+                    for _, row in df_grouped.iterrows()
+                ])
+                logger.debug(f"Matriz de beneficios (profits) preparada con forma: {profits.shape}")
+            except Exception as e:
+                logger.error(f"Error al preparar la matriz de beneficios: {e}")
+                del df_grouped, df_rut_info, df_probabilities, df_cluster_info
+                gc.collect()
+                return {}, 0 # Retornar valores por defecto en caso de error
+
+            model = Model("Maximizar_Ganancias")
+            model.setParam('OutputFlag', 0)  # Disable all output
+            model.ModelSense = GRB.MAXIMIZE
+
+            # Crear variables de decisión y definir el objetivo
+            n_clients, n_treatments = profits.shape
+            variables = {}
+
+            for i in range(n_clients):
+                variables[i] = {}
+                for t in range(n_treatments):
+                    if profits[i, t] > 0:
+                        variables[i][t] = model.addVar(vtype=GRB.BINARY, name=f"x_{i}_{t}")
+            logger.debug(f"Variables de decisión creadas: {len(variables)} clusters con hasta {n_treatments} tratamientos cada uno.")
+
+            # Definir el objetivo
+            model.setObjective(
+                quicksum(variables[i][t] * profits[i, t] for i in variables for t in variables[i])
+            )
+
+            # Restricción: Cada cliente recibe exactamente un tratamiento
+            for i in variables:
+                model.addConstr(quicksum(variables[i].values()) == 1, name=f"OneTreatmentPerClient_{i}")
+            model.addConstr(
+                quicksum(variables[i][t] * df_grouped.loc[i, 'n_clientes'] for i in variables for t in variables[i] if t in [5, 6, 7]) <= capacidad_ejecutivos,
+                name="CapacityConstraint"
+            )
+
+            clusters = df_grouped.groupby("categoria_clusterizacion_numerica").indices
+            for cluster_id, indices_cluster in clusters.items():
+                indices_list = list(indices_cluster)
+                leader_index = indices_list[0]
+                for t in variables[leader_index]:
+                    leader_var = variables[leader_index][t]
+                    for i in indices_list[1:]:
+                        if t in variables[i]:
+                            model.addConstr(variables[i][t] == leader_var, name=f"ClusterConsistency_{cluster_id}_{t}")
+            logger.debug("Restricciones de consistencia por cluster agregadas.")
+
+            # Optimizar el modelo
+            try:
+                model.optimize()
+            except Exception as e:
+                logger.error(f"Error durante la optimización con Gurobi: {e}")
+                return {}, 0  # Retornar valores por defecto en caso de error
+
+            # Verificar si la optimización fue exitosa
+            if model.Status == GRB.OPTIMAL:
+
+                # Asignar tratamientos por cluster basado en los resultados de la optimización
+                resultados_por_cluster = {}
+                for cluster_id, indices_cluster in clusters.items():
+                    leader_index = list(indices_cluster)[0]
+                    for t in variables[leader_index]:
+                        if variables[leader_index][t].X > 0.5:
+                            resultados_por_cluster[cluster_id] = t + 1
+                            break
+
+                # Calcular las ganancias totales
+                ganancias_totales = model.ObjVal
+                logger.info(f"Ganancias totales: {ganancias_totales:.2f}")
+
+                # Calcular el número de ejecutivos usados y restantes
+                executives_used = sum(
+                    df_grouped.loc[i, 'n_clientes'] for i in variables for t in variables[i]
+                    if t in [5, 6, 7] and variables[i][t].X > 0.5
+                )
+                executives_remaining = capacidad_ejecutivos - executives_used
+                self.executives_remaining = executives_remaining
+                logger.info(f"Executives used: {executives_used}")
+                logger.info(f"Executives remaining: {executives_remaining}")
+            else:
+                logger.error("Optimización no alcanzó una solución óptima.")
+                resultados_por_cluster = {}
+                ganancias_totales = 0
+            logger.info("Optimización completada.")
+
+            return resultados_por_cluster, ganancias_totales
+        except Exception as e:
+            logger.error(f"Error en function_modelo_asignacion_tratamientos: {e}")
+            return {}, 0  # Retornar valores por defecto en caso de error global
+
+    def recalculate_metrics(self, df_clusters):
+        logger.info("Recalculando métricas...")
+        df_clusters = df_clusters[['rut', 'categoria_clusterizacion_numerica']]
+
+        # Fusionar df_clusters con df_simulaciones_e_informacion_de_clientes_ventas_tratamiento
+        df_estimar_elasticidad = pd.merge(
+            df_clusters,
+            self.df_sim_ventas_tratamiento,
+            on='rut',
+            how='left'
+        )
+        logger.debug(f"Datos después de la fusión: {df_estimar_elasticidad.head()}")
+
+        dict_elasticidad = self.function_estimar_elasticidad(df_estimar_elasticidad)
+        df_elasticidad = dict_elasticidad['df_estimar_elasticidad']
+        logger.info(f"total_revenue: {dict_elasticidad['total_revenue']}, total_clientes: {dict_elasticidad['total_clientes']}, total_simulaciones: {dict_elasticidad['total_simulaciones']}, total_creditos: {dict_elasticidad['total_creditos']}")
+
+        df_probabilities = self.function_estimar_respuesta_a_tratamiento(df_elasticidad, self.df_simulaciones_info)
+        logger.debug(f"Probabilidades calculadas: {df_probabilities.head()}")
+
+        # Calcular los promedios para 'Monto_Simulado' y 'Plazo_Simulado' por categoría
+        df_elasticidad[['Monto_Simulado_mean', 'Plazo_Simulado_mean']] = df_elasticidad.groupby('categoria_clusterizacion_numerica')[['Monto_Simulado', 'Plazo_Simulado']].transform('mean')
+        logger.debug(f"Promedios calculados: {df_elasticidad[['Monto_Simulado_mean', 'Plazo_Simulado_mean']].head()}")
+
+        # Reducir tamaño de los DataFrames a las columnas esenciales
+        df_estimar_elasticidad_small = df_elasticidad[['categoria_clusterizacion_numerica', 'rut', 'tasa_optima', 'probabilidad_aceptacion_optima', 'Probabilidad_No_Pago', 'Monto_Simulado_mean', 'Plazo_Simulado_mean']]
+        df_probabilities_small = df_probabilities[['categoria_clusterizacion_numerica', 'probabilidad_simular', 'Tratamiento']]
+
+        # Guardar información por cluster, tratamiento y cliente
+        df_cluster_info = df_estimar_elasticidad_small[['categoria_clusterizacion_numerica', 'Monto_Simulado_mean', 'Plazo_Simulado_mean', 'probabilidad_aceptacion_optima', 'tasa_optima']].drop_duplicates()
+        df_probabilities_treatment = df_probabilities_small[['categoria_clusterizacion_numerica', 'probabilidad_simular', 'Tratamiento']].drop_duplicates()
+        df_rut_info = df_estimar_elasticidad_small[['rut', 'categoria_clusterizacion_numerica', 'Probabilidad_No_Pago']].drop_duplicates()
+
+        logger.info("Llamando al modelo de asignación de tratamientos...")
+        # Llamar a la función con los DataFrames procesados
+        resultados_por_cluster, ganancias_totales = self.function_modelo_asignacion_tratamientos(df_cluster_info, df_probabilities_treatment, df_rut_info, 100, 205000)
+
+        logger.info("Recalculación de métricas completada.")
+        return ganancias_totales, len(resultados_por_cluster)
+
+## Entrenamiento
+
+df_info_clientes_rl = df_informacion_de_clientes[['rut', 'Genero', 'Categoria_Digital', 'Elasticidad_Precios', 'Nacionalidad', 'Propension', 'Probabilidad_No_Pago', 'Edad', 'Renta']]
+
+# Suprimir advertencias de pandas
+warnings.simplefilter(action='ignore', category=pd.errors.SettingWithCopyWarning)
+
+
+# Configuración básica del logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+)
+logger = logging.getLogger(__name__)
+
+
+# Función para manejar interrupciones y guardar el modelo
+def save_model_on_interrupt(model, file_name):
+    logger.info(f"Guardando el modelo debido a una interrupción como '{file_name}'...")
+    model.save(file_name)
+    logger.info(f"Modelo guardado exitosamente como '{file_name}'.")
+
+
+# Clase personalizada de callback para registrar recompensas
+class RewardLoggerCallback(BaseCallback):
+    def __init__(self, log_dir, verbose=0):
+        super(RewardLoggerCallback, self).__init__(verbose)
+        self.log_dir = log_dir
+        self.episode_rewards = []
+        self.episode_lengths = []
+        self.episode_count = 0
+
+    def _on_step(self) -> bool:
+        # Verificar si ha terminado un episodio
+        if self.locals.get("dones") and self.locals["dones"][0]:
+            reward = self.locals["rewards"][0]
+            length = self.locals["infos"][0].get("episode", {}).get("l", 0)
+            self.episode_rewards.append(reward)
+            self.episode_lengths.append(length)
+            self.episode_count += 1
+
+            # Guardar recompensas en un archivo CSV
+            data = {
+                "episode": self.episode_count,
+                "reward": reward,
+                "length": length,
+            }
+            df = pd.DataFrame([data])
+            csv_file = os.path.join(self.log_dir, "episode_rewards.csv")
+            if not os.path.isfile(csv_file):
+                df.to_csv(csv_file, index=False)
+            else:
+                df.to_csv(csv_file, mode="a", header=False, index=False)
+
+        return True
+
+
+# Configurar el directorio de logs y modelos
+log_dir = "./logs/"
+os.makedirs(log_dir, exist_ok=True)
+
+# Obtener el timestamp actual
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+try:
+    # Crear la instancia del entorno
+    logger.info("Creando instancia de ClusteringEnv...")
+    env = ClusteringEnv(
+        df_info_clientes_rl,
+        df_simulaciones_e_informacion_de_clientes_ventas_tratamiento,
+        df_simulaciones_info,
+    )
+
+    # Validar si el espacio de acciones está correctamente configurado
+    if env.action_space.n == 0:
+        raise ValueError(
+            "El espacio de acción está vacío al inicializar el entorno. Revisa la configuración inicial."
+        )
+
+    # Envolver el entorno con Monitor para registrar las recompensas
+    env = Monitor(env, filename=os.path.join(log_dir, "monitor.csv"))
+
+    # Verificar el entorno (opcional pero recomendado)
+    logger.info("Verificando el entorno con check_env...")
+    check_env(env, warn=True)
+
+    # Inicializar y entrenar el agente DQN
+    logger.info("Inicializando y entrenando el agente DQN...")
+    model = DQN(
+        "MlpPolicy",
+        env,
+        gamma=0.9,  # Reducir gamma a 0.9
+        exploration_fraction=1.0,  # Mantener alta la tasa de exploración durante todo el entrenamiento
+        exploration_final_eps=0.5,  # No disminuir epsilon por debajo de 0.5
+        verbose=1,
+    )
+
+    # Configurar EvalCallback para evaluar el rendimiento del agente durante el entrenamiento
+    eval_env = ClusteringEnv(
+        df_info_clientes_rl,
+        df_simulaciones_e_informacion_de_clientes_ventas_tratamiento,
+        df_simulaciones_info,
+    )
+    eval_env = Monitor(eval_env, filename=os.path.join(log_dir, "eval_monitor.csv"))
+
+    eval_callback = EvalCallback(
+        eval_env,
+        best_model_save_path=log_dir,
+        log_path=log_dir,
+        eval_freq=20,  # Frecuencia ajustada para evaluaciones
+        deterministic=True,
+        render=False,
+    )
+
+    # Configurar CheckpointCallback para guardar el modelo periódicamente
+    checkpoint_callback = CheckpointCallback(
+        save_freq=50,  # Guarda el modelo cada 50 timesteps
+        save_path=log_dir,
+        name_prefix=f"dqn_model_checkpoint_{timestamp}",
+    )
+
+    # Crear una instancia de RewardLoggerCallback
+    reward_logger = RewardLoggerCallback(log_dir=log_dir)
+
+    # Iniciar el entrenamiento del modelo
+    logger.info("Iniciando el entrenamiento del agente DQN...")
+    model.learn(
+        total_timesteps=100,  # Ajusta el número de timesteps según tus necesidades
+        callback=[eval_callback, checkpoint_callback, reward_logger],
+    )
+    logger.info("Entrenamiento del agente DQN completado.")
+
+    # Guardar el modelo entrenado con timestamp
+    model_file_name = f"dqn_clustering_agent_{timestamp}.zip"
+    model.save(model_file_name)
+    logger.info(f"Modelo DQN guardado como '{model_file_name}'.")
+
+    # Cargar las recompensas registradas y graficarlas
+    logger.info("Cargando recompensas y generando gráfica de rendimiento...")
+    results_df = pd.read_csv(os.path.join(log_dir, "monitor.csv"), skiprows=1)
+    episode_rewards = results_df["r"].tolist()
+    plt.figure(figsize=(12, 6))
+    plt.plot(episode_rewards)
+    plt.xlabel("Episodio")
+    plt.ylabel("Recompensa")
+    plt.title("Recompensa por Episodio durante el Entrenamiento")
+    plt.grid()
+    plt.savefig(os.path.join(log_dir, f"rewards_plot_{timestamp}.png"))
+    plt.close()
+    logger.info(f"Gráfica de recompensas guardada como 'rewards_plot_{timestamp}.png'.")
+
+except KeyboardInterrupt:
+    logger.warning("Entrenamiento interrumpido por el usuario.")
+    # Guardar el modelo con timestamp indicando interrupción
+    model_file_name = f"dqn_clustering_agent_interrupt_{timestamp}.zip"
+    save_model_on_interrupt(model, file_name=model_file_name)
+
+except Exception as e:
+    logger.error(f"Se produjo un error durante la ejecución: {str(e)}", exc_info=True)
+    # Guardar el modelo con timestamp indicando error
+    model_file_name = f"dqn_clustering_agent_error_{timestamp}.zip"
+    save_model_on_interrupt(model, file_name=model_file_name)
+
+
+# Cargar las recompensas registradas y graficarlas
+results_df = pd.read_csv(os.path.join(log_dir, "monitor.csv"), skiprows=1)
+episode_rewards = results_df["r"].tolist()
+plt.figure(figsize=(12, 6))
+plt.plot(episode_rewards)
+plt.xlabel("Episodio")
+plt.ylabel("Recompensa")
+plt.title("Recompensa por Episodio durante el Entrenamiento")
+plt.grid()
+plt.savefig(os.path.join(log_dir, f"rewards_plot_{timestamp}.png"))
+plt.close()
+logger.info(f"Gráfica de recompensas guardada como 'rewards_plot_{timestamp}.png'.")
+
+
+
+# Suprimir advertencias de pandas
+warnings.simplefilter(action='ignore', category=pd.errors.SettingWithCopyWarning)
+
+# Configuración básica del logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+)
+logger = logging.getLogger(__name__)
+
+# Función para manejar interrupciones y guardar el modelo
+def save_model_on_interrupt(model, file_name):
+    logger.info(f"Guardando el modelo debido a una interrupción como '{file_name}'...")
+    model.save(file_name)
+    logger.info(f"Modelo guardado exitosamente como '{file_name}'.")
+
+# Clase personalizada de callback para registrar recompensas
+class RewardLoggerCallback(BaseCallback):
+    def __init__(self, log_dir, verbose=0):
+        super(RewardLoggerCallback, self).__init__(verbose)
+        self.log_dir = log_dir
+        self.episode_rewards = []
+        self.episode_lengths = []
+        self.episode_count = 0
+
+    def _on_step(self) -> bool:
+        # Verificar si ha terminado un episodio
+        if self.locals.get("dones") and self.locals["dones"][0]:
+            reward = self.locals["rewards"][0]
+            length = self.locals["infos"][0].get("episode", {}).get("l", 0)
+            self.episode_rewards.append(reward)
+            self.episode_lengths.append(length)
+            self.episode_count += 1
+
+            # Guardar recompensas en un archivo CSV
+            data = {
+                "episode": self.episode_count,
+                "reward": reward,
+                "length": length,
+            }
+            df = pd.DataFrame([data])
+            csv_file = os.path.join(self.log_dir, "episode_rewards.csv")
+            if not os.path.isfile(csv_file):
+                df.to_csv(csv_file, index=False)
+            else:
+                df.to_csv(csv_file, mode="a", header=False, index=False)
+
+        return True
+
+# Establecer un múltiplo de max_steps para total_timesteps
+max_steps = 50  # Pasos por episodio
+episodes_per_block = 5  # Episodios entre evaluaciones
+eval_freq = max_steps * episodes_per_block  # Evaluar después de 5 episodios
+save_freq = eval_freq  # Guardar el modelo con la misma frecuencia
+total_timesteps = eval_freq * 10  # 50 bloques de 5 episodios cada uno
+
+# Configurar el directorio de logs y modelos
+log_dir = "./logs/"
+os.makedirs(log_dir, exist_ok=True)
+
+# Obtener el timestamp actual
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+# Ruta al modelo DQN existente
+existing_model_path = "./dqn_clustering_agent_interrupt_20241202_005345.zip"
+try:
+    # Crear la instancia del entorno
+    logger.info("Creando instancia de ClusteringEnv...")
+    env = ClusteringEnv(
+        df_info_clientes_rl,
+        df_simulaciones_e_informacion_de_clientes_ventas_tratamiento,
+        df_simulaciones_info,
+    )
+
+    # Envolver el entorno con Monitor
+    env = Monitor(env, filename=os.path.join(log_dir, "monitor.csv"))
+
+    # Verificar el entorno (opcional pero recomendado)
+    logger.info("Verificando el entorno con check_env...")
+    check_env(env, warn=True)
+
+    # Cargar el modelo DQN existente
+    logger.info(f"Cargando el modelo DQN desde '{existing_model_path}'...")
+    model = DQN.load(existing_model_path, env=env,
+                    gamma=0.95,  # Focus on long-term rewards
+                    exploration_fraction=0.1,  # Quick transition to exploitation
+                    exploration_final_eps=0.01)  # Minimal randomness in decisions
+
+
+    # Configurar EvalCallback para evaluar el rendimiento del agente durante el entrenamiento
+    eval_env = ClusteringEnv(
+        df_info_clientes_rl,
+        df_simulaciones_e_informacion_de_clientes_ventas_tratamiento,
+        df_simulaciones_info,
+    )
+    eval_env.max_steps = 50
+    eval_env = Monitor(eval_env, filename=os.path.join(log_dir, "eval_monitor.csv"))
+
+    eval_callback = EvalCallback(
+        eval_env,
+        best_model_save_path=log_dir,
+        log_path=log_dir,
+        eval_freq=eval_freq,  # Frecuencia ajustada
+        deterministic=True,
+        render=False,
+    )
+
+    # Configurar CheckpointCallback para guardar el modelo periódicamente
+    checkpoint_callback = CheckpointCallback(
+        save_freq=save_freq,  # Frecuencia ajustada
+        save_path=log_dir,
+        name_prefix=f"dqn_model_checkpoint_{timestamp}",
+    )
+
+
+    # Crear una instancia de RewardLoggerCallback
+    reward_logger = RewardLoggerCallback(log_dir=log_dir)
+
+    # Continuar el entrenamiento del modelo
+    logger.info("Continuando el entrenamiento del modelo DQN...")
+    model.learn(
+        total_timesteps=total_timesteps,  # Total ajustado
+        callback=[eval_callback, checkpoint_callback, reward_logger],
+    )
+    logger.info("Entrenamiento del modelo DQN completado.")
+
+    # Guardar el modelo actualizado con timestamp
+    updated_model_file_name = f"dqn_clustering_agent_updated_{timestamp}.zip"
+    model.save(updated_model_file_name)
+    logger.info(f"Modelo DQN actualizado guardado como '{updated_model_file_name}'.")
+
+    # Cargar las recompensas registradas y graficarlas
+    logger.info("Cargando recompensas y generando gráfica de rendimiento...")
+    results_df = pd.read_csv(os.path.join(log_dir, "monitor.csv"), skiprows=1)
+    episode_rewards = results_df["r"].tolist()
+    plt.figure(figsize=(12, 6))
+    plt.plot(episode_rewards)
+    plt.xlabel("Episodio")
+    plt.ylabel("Recompensa")
+    plt.title("Recompensa por Episodio durante el Entrenamiento")
+    plt.grid()
+    plt.savefig(os.path.join(log_dir, f"rewards_plot_{timestamp}.png"))
+    plt.close()
+    logger.info(f"Gráfica de recompensas guardada como 'rewards_plot_{timestamp}.png'.")
+
+    # Evaluate the trained model deterministically
+    logger.info("Evaluating the trained model in deterministic mode...")
+    deterministic_rewards = []
+    for _ in range(100):  # Run 100 episodes
+        obs = env.reset()
+        episode_reward = 0
+        done = False
+        while not done:
+            action, _states = model.predict(obs, deterministic=True)
+            obs, reward, done, info = env.step(action)
+            episode_reward += reward
+        deterministic_rewards.append(episode_reward)
+
+    average_reward = np.mean(deterministic_rewards)
+    logger.info(f"Average reward over 100 deterministic episodes: {average_reward}")
+
+    # Cargar recompensas y generar gráfica de rendimiento
+    logger.info("Cargando recompensas y generando gráfica de rendimiento...")
+    results_df = pd.read_csv(os.path.join(log_dir, "monitor.csv"), skiprows=1)
+    episode_rewards = results_df["r"].tolist()
+
+except KeyboardInterrupt:
+    logger.warning("Entrenamiento interrumpido por el usuario.")
+    # Guardar el modelo con timestamp indicando interrupción
+    interrupted_model_file_name = f"dqn_clustering_agent_interrupt_{timestamp}.zip"
+    save_model_on_interrupt(model, file_name=interrupted_model_file_name)
+
+except Exception as e:
+    logger.error(f"Se produjo un error durante la ejecución: {str(e)}", exc_info=True)
+    # Guardar el modelo con timestamp indicando error
+    error_model_file_name = f"dqn_clustering_agent_error_{timestamp}.zip"
+    save_model_on_interrupt(model, file_name=error_model_file_name)
+
+
+# 9. SIMULACION
+
+# Cargar datos
+df_clientes = pd.read_csv("Informacion_Clientes.csv")
+df_cluster = pd.read_csv("assigned_treatments_intuitivo_1/assignation_20241202_064643/cluster_info_intuitivo1.csv")
+df_treatment = pd.read_csv("assigned_treatments_intuitivo_1/assignation_20241202_064643/assigned_treatments_intuitivo1.csv")
+
+print(df_cluster.columns)
+print(df_treatment.columns)
+
+df_cluster.dropna(inplace=True)
+df_treatment.dropna(inplace=True)
+
+
+# Renombrar categoria_clusterizacion_numerica a cluster
+df_cluster = df_cluster.rename(columns={'categoria_clusterizacion_numerica': 'cluster'})
+
+# Seleccionar solo las columnas adicionales de df_cluster
+cluster_additional_cols = [col for col in df_cluster.columns if col not in df_treatment.columns and col != 'cluster']
+
+
+# Realizar el merge utilizando solo las columnas adicionales
+df_combined = df_treatment.merge(
+    df_cluster[['cluster'] + cluster_additional_cols],  # cluster y columnas adicionales
+    on='cluster', 
+    how='left'
+)
+
+print(df_combined.columns)
+
+# Dividir tasa_optima por 100 directamente en df_combined
+df_combined['tasa_optima'] = df_combined['tasa_optima'] / 100
+
+# Calcular Monto_Simulado en df_clientes
+df_clientes['Monto_Simulado'] = (
+    -866900 
+    + 0.8845 * df_clientes['Renta'] 
+    + 0.7231 * df_clientes['Oferta_Consumo'] 
+    - 0.105 * df_clientes['Deuda_CMF']
+)
+
+# Añadir Monto_Simulado a df_combined
+df_combined = df_combined.merge(
+    df_clientes[['rut', 'Monto_Simulado']], 
+    on='rut', 
+    how='left'
+)
+
+print(df_combined.columns)
+
+# Reemplazar valores negativos en Monto_Simulado con 0
+df_combined['Monto_Simulado'] = df_combined['Monto_Simulado'].clip(lower=0)
+
+df_combined['Plazo_Esperado'] = (df_combined['Plazo_Simulado_min'] + df_combined['Plazo_Simulado_max'] + df_combined['Plazo_Simulado_mode'])/3
+
+# Calcular RC
+df_combined['RC'] = (
+    (df_combined['Plazo_Esperado'] * df_combined['Monto_Simulado'] * df_combined['tasa_optima'] *
+     ((1 + df_combined['tasa_optima']) ** df_combined['Plazo_Esperado'])) /
+    (((1 + df_combined['tasa_optima']) ** df_combined['Plazo_Esperado']) - 1)
+    - df_combined['Monto_Simulado']
+)
+
+# Guardar resultado final
+df_combined.to_csv("info_final.csv", index=False)
+
+####################################################################################################
+# Carga el archivo CSV en un DataFrame
+df = pd.read_csv('info_final.csv')
+
+####################################################################################################
+# Definimos tambien el costo de los correos
+costosms = 100
+
+# Mapeo del número de correos por tratamiento
+correos_por_tratamiento = {
+    1: 0,
+    2: 1,
+    3: 2,
+    4: 3,
+    5: 4,
+    6: 0,
+    7: 1,
+    8: 2
+}
+
+# Agregar una columna con el número de correos de acuerdo al tratamiento
+df['num_correos'] = df['assigned_treatment'].map(correos_por_tratamiento)
+
+####################################################################################################
+# PENDIENTE: EVALUAR SI TRABAJAR SIMPLEMENTE CON RC o para cada cluster definir como tratar los 
+# montos y plazos simulados
+
+####################################################################################################
+# SIMULACIÓN y KPIS:
+# 1.Calcular el valor esperado de ganancias
+# 2.Calcular el numero promedio de correos enviados
+# 3.Simular las ventas segun las variables aleatorias (sacar creditos cursados y valor promedio ganancias)
+# 4.Sacar desviación estandar 
+
+#####################################################################################################
+# 1. Valor esperado ganancias (cambiar al tener el estudio de montos y plazos)
+# Calcular la ganancia esperada para cada fila considerando los costos de correos
+df['ganancia_esperada_fila'] = (
+    df['RC'] * 
+    df['probabilidad_de_simular'] * 
+    df['probabilidad_aceptacion_optima'] * 
+    (1 - df['Probabilidad_No_Pago']) -
+    (df['num_correos'] * costosms)
+)
+
+# Calcular la ganancia_esperada total
+ganancia_esperada_total = df['ganancia_esperada_fila'].sum()
+
+print("Ganancia esperada total:", ganancia_esperada_total)
+####################################################################################################
+# 2. Numero de correos enviados:
+
+# Calcular el número promedio de correos enviados
+promedio_correos = df['num_correos'].mean()
+
+# Calcular el total de correos enviados
+total_correos_enviados = df['num_correos'].sum()
+
+# Mostrar los resultados
+print("Total de correos enviados:", total_correos_enviados)
+print("Número promedio de correos enviados:", promedio_correos)
+
+####################################################################################################
+# 3 y 4. Simulación
+import numpy as np
+# Configuración de la simulación
+num_simulaciones = 100
+ganancias_simuladas = []
+tasas_creditos_aceptados = []
+
+# Realizar la simulación
+for _ in range(num_simulaciones):
+    # Generar plazos simulados con distribución triangular
+    plazos_simulados = np.random.triangular(
+        df['Plazo_Simulado_min'],
+        df['Plazo_Simulado_mode'],
+        df['Plazo_Simulado_max']
+    )
+
+    # Calcular RC dinámico basado en los plazos simulados
+    rc_simulado = (
+        (plazos_simulados * df['Monto_Simulado'] * df['tasa_optima'] *
+         ((1 + df['tasa_optima']) ** plazos_simulados)) /
+        (((1 + df['tasa_optima']) ** plazos_simulados) - 1) -
+        df['Monto_Simulado']
+    )
+
+    # Simular variables aleatorias (binomiales)
+    sim_probabilidad_de_simular = np.random.binomial(1, df['probabilidad_de_simular'])
+    sim_probabilidad_aceptacion_optima = np.random.binomial(1, df['probabilidad_aceptacion_optima'])
+    sim_Probabilidad_No_Pago = np.random.binomial(1, df['Probabilidad_No_Pago'])
+
+    # Calcular el total de créditos simulados y aceptados
+    total_creditos_simulados = sim_probabilidad_de_simular.sum()
+    total_creditos_aceptados = (sim_probabilidad_de_simular * sim_probabilidad_aceptacion_optima).sum()
+    
+    # Calcular la tasa de créditos aceptados
+    tasa_creditos_aceptados = (
+        total_creditos_aceptados / total_creditos_simulados
+        if total_creditos_simulados > 0 else 0
+    )
+
+    # Calcular la ganancia esperada para cada fila en esta simulación
+    ganancia_simulada_fila = (
+        rc_simulado *
+        sim_probabilidad_de_simular *
+        sim_probabilidad_aceptacion_optima *
+        (1 - sim_Probabilidad_No_Pago) -
+        (df['num_correos'] * costosms)
+    )
+    
+    # Calcular la ganancia total de esta simulación y almacenarla
+    ganancia_total_simulada = ganancia_simulada_fila.sum()
+    ganancias_simuladas.append(ganancia_total_simulada)
+    tasas_creditos_aceptados.append(tasa_creditos_aceptados)
+
+# Calcular el promedio y la desviación estándar de las ganancias simuladas
+promedio_ganancias = np.mean(ganancias_simuladas)
+desviacion_ganancias = np.std(ganancias_simuladas)
+
+# Calcular el promedio de la tasa de créditos aceptados
+promedio_tasa_creditos_aceptados = np.mean(tasas_creditos_aceptados)
+
+# Mostrar resultados
+print("Promedio de ganancias simuladas:", promedio_ganancias)
+print("Desviación estándar de ganancias simuladas:", desviacion_ganancias)
+print("Tasa promedio de créditos aceptados:", promedio_tasa_creditos_aceptados)
+
